@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2007, Guennadi Liakhovetski <lg@denx.de>
  *
- * (C) Copyright 2009-2010 Freescale Semiconductor, Inc.
+ * (C) Copyright 2009-2011 Freescale Semiconductor, Inc.
  *
  * Configuration settings for the MX51-3Stack Freescale board.
  *
@@ -90,7 +90,8 @@
 
 #define CONFIG_USB_DEVICE
 #define CONFIG_FASTBOOT		1
-#define CONFIG_FASTBOOT_STORAGE_EMMC
+#define CONFIG_IMX_UDC		1
+#define CONFIG_FASTBOOT_STORAGE_EMMC_SATA
 #define CONFIG_FASTBOOT_VENDOR_ID	0xbb4
 #define CONFIG_FASTBOOT_PRODUCT_ID	0xc01
 #define CONFIG_FASTBOOT_BCD_DEVICE	0x311
@@ -99,7 +100,6 @@
 #define CONFIG_FASTBOOT_CONFIGURATION_STR  "Android fastboot"
 #define CONFIG_FASTBOOT_INTERFACE_STR    "Android fastboot"
 #define CONFIG_FASTBOOT_SERIAL_NUM	 "12345"
-#define CONFIG_FASTBOOT_MMC_NO		 0
 #define CONFIG_FASTBOOT_TRANSFER_BUF	 0xA0000000
 #define CONFIG_FASTBOOT_TRANSFER_BUF_SIZE 0x8000000 /* 128M byte */
 
@@ -126,7 +126,7 @@
 	"rootfs=ext4 di1_primary"
 #define CONFIG_ANDROID_RECOVERY_BOOTCMD_MMC  \
 	"run bootargs_base bootargs_android_recovery;"	\
-	"mmc read 0 ${loadaddr} 0x800 0x1800;bootm"
+	"mmc read 0 ${loadaddr} 0x800 0x2000;bootm"
 #define CONFIG_ANDROID_RECOVERY_CMD_FILE "/recovery/command"
 
 #define CONFIG_ANDROID_SYSTEM_PARTITION_MMC 2
@@ -159,7 +159,7 @@
 #define CONFIG_PRIME	"FEC0"
 
 #define CONFIG_LOADADDR		0x90800000	/* loadaddr env var */
-#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x300000)
+#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x400000)
 
 #define	CONFIG_EXTRA_ENV_SETTINGS					\
 		"netdev=eth0\0"						\
@@ -167,9 +167,9 @@
 		"uboot_addr=0xa0000000\0"				\
 		"uboot=u-boot.bin\0"			\
 		"kernel=uImage\0"				\
-		"rd_loadaddr=0x90B00000\0"	\
+		"rd_loadaddr=0x90C00000\0"	\
 		"nfsroot=/opt/eldk/arm\0"				\
-		"bootargs_base=setenv bootargs console=ttymxc0,115200\0"\
+		"bootargs_base=setenv bootargs console=ttymxc0,115200 gpu_memory=16M\0"\
 		"bootargs_nfs=setenv bootargs ${bootargs} root=/dev/nfs " \
 			"ip=dhcp nfsroot=${serverip}:${nfsroot},v3,tcp\0"\
 		"bootcmd_net=run bootargs_base bootargs_nfs; "		\
@@ -181,15 +181,15 @@
 			"setenv filesize; saveenv\0"			\
 		"bootcmd=run bootcmd_SD \0"				\
 		"bootcmd_SD=run bootargs_base bootargs_android;"	\
-		     "mmc read 0 ${loadaddr} 0x800 1800;"		\
-		     "mmc read 0 ${rd_loadaddr} 0x2000 0x258;"		\
+		     "mmc read 0 ${loadaddr} 0x800 2000;"		\
+		     "mmc read 0 ${rd_loadaddr} 0x3000 0x258;"		\
 		     "bootm ${loadaddr} ${rd_loadaddr}\0"		\
 		"bootargs_android=setenv bootargs ${bootargs}  "	\
 		     "androidboot.console=ttymxc0 init=/init "		\
 		     "di1_primary calibration\0"			\
 		"bootcmd_android_recovery=run bootargs_base"		\
 		     " bootargs_android_recovery;"			\
-		     "mmc read 0 ${loadaddr} 0x800 0x1800;bootm\0"	\
+		     "mmc read 0 ${loadaddr} 0x800 0x2000;bootm\0"	\
 		"bootargs_android_recovery=setenv bootargs ${bootargs}" \
 		     " init=/init root=/dev/mmcblk0p4 rootfs=ext4"	\
 		     " di1_primary \0"					\
@@ -348,4 +348,22 @@
 #undef CONFIG_JFFS2_CMDLINE
 #define CONFIG_JFFS2_DEV	"nand0"
 
+#ifdef CONFIG_SPLASH_SCREEN
+	/*
+	 * Framebuffer and LCD
+	 */
+	#define CONFIG_LCD
+	#define CONFIG_VIDEO_MX5
+	#define CONFIG_MXC_HSC
+	#define CONFIG_IPU_CLKRATE	133000000
+	#define CONFIG_SYS_CONSOLE_ENV_OVERWRITE
+	#define CONFIG_SYS_CONSOLE_OVERWRITE_ROUTINE
+	#define CONFIG_SYS_CONSOLE_IS_IN_ENV
+	#define LCD_BPP		LCD_COLOR16
+	#define CONFIG_CMD_BMP
+	#define CONFIG_BMP_8BPP
+	#define CONFIG_FB_BASE	(TEXT_BASE + 0x300000)
+	#define CONFIG_SPLASH_SCREEN_ALIGN
+	#define CONFIG_SYS_WHITE_ON_BLACK
+#endif
 #endif				/* __CONFIG_H */

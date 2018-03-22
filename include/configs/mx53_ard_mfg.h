@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * MFG Configuration settings for the MX53-ARD Freescale board.
  *
@@ -40,6 +40,10 @@
 #define CONFIG_ARCH_MMU
 
 #define CONFIG_MX53_HCLK_FREQ	24000000
+#define CONFIG_SYS_PLL2_FREQ    400
+#define CONFIG_SYS_AHB_PODF     2
+#define CONFIG_SYS_AXIA_PODF    0
+#define CONFIG_SYS_AXIB_PODF    1
 
 #define CONFIG_DISPLAY_CPUINFO
 #define CONFIG_DISPLAY_BOARDINFO
@@ -91,6 +95,7 @@
 #define CONFIG_BOOTP_SUBNETMASK
 #define CONFIG_BOOTP_GATEWAY
 #define CONFIG_BOOTP_DNS
+#define CONFIG_CMD_IIM
 #define CONFIG_CMD_MMC
 #define CONFIG_CMD_ENV
 
@@ -145,6 +150,15 @@
 #define CONFIG_MII_GASKET
 #define CONFIG_DISCOVER_PHY
 
+/*
+ * FUSE Configs
+  * */
+#ifdef CONFIG_CMD_IIM
+	#define CONFIG_IMX_IIM
+	#define IMX_IIM_BASE    IIM_BASE_ADDR
+	#define CONFIG_IIM_MAC_BANK     1
+	#define CONFIG_IIM_MAC_ROW      9
+#endif
 /*
  * I2C Configs
  */

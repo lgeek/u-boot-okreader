@@ -28,7 +28,8 @@
 #define CONFIG_MXC
 #define CONFIG_MX50
 #define CONFIG_MX50_RDP
-#define CONFIG_LPDDR2
+// Joseph 20110502	#define CONFIG_LPDDR2
+#define CONFIG_MX50_E606XX
 #define CONFIG_FLASH_HEADER
 #define CONFIG_FLASH_HEADER_OFFSET 0x400
 
@@ -72,7 +73,11 @@
  * Hardware drivers
  */
 #define CONFIG_MXC_UART
+#ifdef CONFIG_MX50_E606XX	// Joseph 20110502
+#define CONFIG_UART_BASE_ADDR	UART2_BASE_ADDR
+#else
 #define CONFIG_UART_BASE_ADDR	UART1_BASE_ADDR
+#endif
 
 /* allow to overwrite serial and ethaddr */
 #define CONFIG_ENV_OVERWRITE
@@ -84,33 +89,88 @@
  * Command definition
  ***********************************************************/
 
-#include <config_cmd_default.h>
+//Joseph 20110531	#include <config_cmd_default.h>
 
-#define CONFIG_CMD_PING
-#define CONFIG_CMD_DHCP
+#define CONFIG_CMD_BDI		/* bdinfo			*/
+#define CONFIG_CMD_BOOTD	/* bootd			*/
+#define CONFIG_CMD_CONSOLE	/* coninfo			*/
+#define CONFIG_CMD_ECHO		/* echo arguments		*/
+#define CONFIG_CMD_FPGA		/* FPGA configuration Support	*/
+#define CONFIG_CMD_IMI		/* iminfo			*/
+#define CONFIG_CMD_ITEST	/* Integer (and string) test	*/
+#define CONFIG_CMD_LOADB	/* loadb			*/
+#define CONFIG_CMD_LOADS	/* loads			*/
+#define CONFIG_CMD_MEMORY	/* md mm nm mw cp cmp crc base loop mtest */
+#define CONFIG_CMD_MISC		/* Misc functions like sleep etc*/
+#define CONFIG_CMD_RUN		/* run command in env variable	*/
+#define CONFIG_CMD_SAVEENV	/* saveenv			*/
+#define CONFIG_CMD_SETGETDCR	/* DCR support on 4xx		*/
+#define CONFIG_CMD_SOURCE	/* "source" command support	*/
+#define CONFIG_CMD_XIMG		/* Load part of Multi Image	*/
+#define CONFIG_CMD_DATE
+
+// Joseph 20110531	#define CONFIG_CMD_PING
+// Joseph 20110531	#define CONFIG_CMD_DHCP
 #define CONFIG_CMD_MII
-#define CONFIG_CMD_NET
-#define CONFIG_NET_RETRY_COUNT  100
-#define CONFIG_NET_MULTI 1
-#define CONFIG_BOOTP_SUBNETMASK
-#define CONFIG_BOOTP_GATEWAY
-#define CONFIG_BOOTP_DNS
+// Joseph 20110531	#define CONFIG_CMD_NET
+// Joseph 20110531	#define CONFIG_NET_RETRY_COUNT  100
+// Joseph 20110531	#define CONFIG_NET_MULTI 1
+// Joseph 20110531	#define CONFIG_BOOTP_SUBNETMASK
+// Joseph 20110531	#define CONFIG_BOOTP_GATEWAY
+// Joseph 20110531	#define CONFIG_BOOTP_DNS
 
 #define CONFIG_CMD_MMC
-#define CONFIG_CMD_ENV
+//#define CONFIG_CMD_ENV
 
 /*#define CONFIG_CMD */
 #define CONFIG_REF_CLK_FREQ CONFIG_MX50_HCLK_FREQ
 
 #undef CONFIG_CMD_IMLS
 
-#define CONFIG_BOOTDELAY	3
+#define CONFIG_BOOTDELAY	1
 
 #define CONFIG_PRIME	"FEC0"
 
 #define CONFIG_LOADADDR		0x70800000	/* loadaddr env var */
-#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x300000)
+//#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x300000)
+#define CONFIG_RD_LOADADDR	0x70D00000
+//#define CONFIG_ENV_IS_EMBEDDED
 
+#ifdef CONFIG_MX50_E606XX
+#if 0
+#define	CONFIG_EXTRA_ENV_SETTINGS					\
+		"uboot=u-boot.bin\0"			\
+		"kernel=uImage\0"				\
+		"bootargs_base=setenv bootargs noinitrd console=ttymxc0 rootwait rw no_console_suspend ${bootargs}\0"\
+		"rootdevESD1=/dev/mmcblk1p1\0" \
+		"rootdevESD2=/dev/mmcblk1p2\0" \
+		"rootdevRecovery=/dev/mmcblk0p2\0" \
+		"rootdevNormal=/dev/mmcblk0p1\0" \
+		"rootdev=${rootdevNormal}\0" \
+		"rootfstype=ext3\0" \
+		"bootargs_mmc=setenv bootargs ${bootargs} root=${rootdev} rootfstype=${rootfstype}\0" \
+		"bootcmd_mmc=run bootargs_base bootargs_mmc;load_ntxkernel; bootm\0"   \
+		"bootcmd=run bootcmd_mmc\0" 
+
+#else	
+#define	CONFIG_EXTRA_ENV_SETTINGS					\
+		"uboot=u-boot.bin\0"			\
+		"kernel=uImage\0"				\
+		"bootargs_base=setenv bootargs console=ttymxc0,115200 rootwait rw no_console_suspend lpj=3997696\0"\
+		"bootargs_mmc=setenv bootargs ${bootargs}\0" \
+		"bootcmd_mmc=run bootargs_base bootargs_mmc;load_ntxkernel; bootm\0"   \
+		"bootargs_SD=setenv bootargs ${bootargs}\0" \
+		"bootcmd_SD=run bootargs_base bootargs_SD;load_ntxkernel; bootm\0"   \
+		"bootargs_recovery=setenv bootargs ${bootargs}\0" \
+		"bootcmd_recovery=run bootargs_base bootargs_recovery;load_ntxkernel; bootm\0"   \
+		"bootcmd=run bootcmd_mmc\0" \
+		"KRN_SDNUM_SD=1\0" \
+		"KRN_SDNUM_Recovery=0\0" \
+		"verify=no" 
+
+#endif
+
+#else
 #define	CONFIG_EXTRA_ENV_SETTINGS					\
 		"netdev=eth0\0"						\
 		"ethprime=FEC0\0"					\
@@ -125,7 +185,9 @@
 		"bootargs_mmc=setenv bootargs ${bootargs} ip=dhcp "     \
 			"root=/dev/mmcblk0p2 rootwait\0"                \
 		"bootcmd_mmc=run bootargs_base bootargs_mmc; bootm\0"   \
-		"bootcmd=run bootcmd_net\0"                             \
+		"bootcmd=run bootcmd_mmc\0"                             \
+		
+#endif
 
 
 #define CONFIG_ARP_TIMEOUT	200UL
@@ -134,12 +196,12 @@
  * Miscellaneous configurable options
  */
 #define CONFIG_SYS_LONGHELP		/* undef to save memory */
-#define CONFIG_SYS_PROMPT		"MX50_RDP U-Boot > "
+#define CONFIG_SYS_PROMPT		"eBR-1A # "
 #define CONFIG_AUTO_COMPLETE
-#define CONFIG_SYS_CBSIZE		256	/* Console I/O Buffer Size */
+#define CONFIG_SYS_CBSIZE		512	/* Console I/O Buffer Size */
 /* Print Buffer Size */
 #define CONFIG_SYS_PBSIZE (CONFIG_SYS_CBSIZE + sizeof(CONFIG_SYS_PROMPT) + 16)
-#define CONFIG_SYS_MAXARGS	16	/* max number of command args */
+#define CONFIG_SYS_MAXARGS	32	/* max number of command args */
 #define CONFIG_SYS_BARGSIZE CONFIG_SYS_CBSIZE /* Boot Argument Buffer Size */
 
 #define CONFIG_SYS_MEMTEST_START	0	/* memtest works on */
@@ -158,9 +220,9 @@
 #define CONFIG_FEC0_PHY_ADDR	-1
 #define CONFIG_FEC0_MIIBASE	-1
 
-#define CONFIG_GET_FEC_MAC_ADDR_FROM_IIM
+//#define CONFIG_GET_FEC_MAC_ADDR_FROM_IIM
 
-#define CONFIG_MXC_FEC
+//#define CONFIG_MXC_FEC
 #define CONFIG_MII
 #define CONFIG_MII_GASKET
 #define CONFIG_DISCOVER_PHY
@@ -176,17 +238,68 @@
 #define CONFIG_CMD_I2C          1
 
 #ifdef CONFIG_CMD_I2C
+
+	// i2c device channel index ...
+	#define GET_I2C_CHN_NEONODE()		1
+	#define IS_I2C_CHN_TPS65185(_Chn)	\
+		({\
+		 	int _iRet=0;\
+			if(28==gptNtxHwCfg->m_val.bPCB) {\
+		 		_iRet=(2==_Chn||1==_Chn)?1:0;\
+			}\
+			else {\
+		 		_iRet=(2==_Chn)?1:0;\
+			}\
+		 	_iRet;\
+		 })
+
+	#define GET_I2C_CHN_TPS65185()	\
+		({\
+		 	int _iRet=0;\
+			if(28==gptNtxHwCfg->m_val.bPCB) {\
+		 		_iRet=1;\
+			}\
+			else {\
+		 		_iRet=2;\
+			}\
+		 	_iRet;\
+		 })
+
+
+
+	#define CONFIG_I2C_MULTI_BUS
 	#define CONFIG_HARD_I2C         1
 	#define CONFIG_I2C_MXC          1
-	#define CONFIG_SYS_I2C_PORT             I2C2_BASE_ADDR
+	
+	#ifdef CONFIG_I2C_MULTI_BUS//[
+	
+	#ifndef __ASSEMBLY__//[
+	typedef struct tagI2C_PLATFORM_DATA {
+		unsigned int dwPort;
+		unsigned int dwSpeed;
+		unsigned int dwSlave;
+		int iIsInited;
+	} I2C_PLATFORM_DATA;
+	extern unsigned int gdwBusNum;
+	extern I2C_PLATFORM_DATA gtI2C_platform_dataA[];
+	#endif //]__ASSEMBLY__
+
+	#define CONFIG_SYS_I2C_PORT             gtI2C_platform_dataA[gdwBusNum].dwPort
+	#define CONFIG_SYS_I2C_SPEED            gtI2C_platform_dataA[gdwBusNum].dwSpeed
+	#define CONFIG_SYS_I2C_SLAVE            gtI2C_platform_dataA[gdwBusNum].dwSlave
+	#else//][!CONFIG_I2C_MULTI_BUS
+	#define CONFIG_SYS_I2C_PORT             I2C3_BASE_ADDR
 	#define CONFIG_SYS_I2C_SPEED            100000
 	#define CONFIG_SYS_I2C_SLAVE            0xfe
+	#endif//]CONFIG_I2C_MULTI_BUS
+	
 #endif
 
 
 /*
  * SPI Configs
  */
+#if 0
 #define CONFIG_FSL_SF		1
 #define CONFIG_CMD_SPI
 #define CONFIG_CMD_SF
@@ -197,6 +310,7 @@
 #define MAX_SPI_BYTES		(8 * 4)
 #define CONFIG_IMX_SPI_PMIC
 #define CONFIG_IMX_SPI_PMIC_CS 0
+#endif
 
 /*
  * MMC Configs
@@ -225,7 +339,7 @@
 /*
  * GPMI Nand Configs
  */
-#define CONFIG_CMD_NAND
+//#define CONFIG_CMD_NAND
 
 #ifdef CONFIG_CMD_NAND
 	#define CONFIG_NAND_GPMI
@@ -262,7 +376,11 @@
  */
 #define CONFIG_NR_DRAM_BANKS	1
 #define PHYS_SDRAM_1		CSD0_BASE_ADDR
+#ifdef CONFIG_MX50_E606XX	// Joseph 20110502
+#define PHYS_SDRAM_1_SIZE	(256 * 1024 * 1024)
+#else
 #define PHYS_SDRAM_1_SIZE	(512 * 1024 * 1024)
+#endif
 #define iomem_valid_addr(addr, size) \
 	(addr >= PHYS_SDRAM_1 && addr <= (PHYS_SDRAM_1 + PHYS_SDRAM_1_SIZE))
 
@@ -291,3 +409,15 @@
 	#define CONFIG_ENV_IS_NOWHERE	1
 #endif
 #endif				/* __CONFIG_H */
+
+#define CONFIG_MXC_KPD
+#define CONFIG_MXC_KEYMAPPING \
+	{	\
+		0, 1, 2, 3, \
+		4, 5, 6, 7, \
+		8, 9, 10, 11, \
+		12, 13, 14, 15,\
+	}
+#define CONFIG_MXC_KPD_COLMAX 4
+#define CONFIG_MXC_KPD_ROWMAX 4
+

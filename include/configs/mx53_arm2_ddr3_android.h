@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * Configuration settings for the MX53-ARM2-DDR3 Freescale board.
  *
@@ -39,6 +39,10 @@
 #define CONFIG_ARCH_MMU
 
 #define CONFIG_MX53_HCLK_FREQ	24000000
+#define CONFIG_SYS_PLL2_FREQ    600
+#define CONFIG_SYS_AHB_PODF     4
+#define CONFIG_SYS_AXIA_PODF    1
+#define CONFIG_SYS_AXIB_PODF    2
 
 #define CONFIG_DISPLAY_CPUINFO
 #define CONFIG_DISPLAY_BOARDINFO
@@ -194,7 +198,7 @@
 /*
  * FUSE Configs
  * */
-#ifdef CONFIG_CMD_MMC
+#ifdef CONFIG_CMD_IIM
 	#define CONFIG_IMX_IIM
 	#define IMX_IIM_BASE    IIM_BASE_ADDR
 	#define CONFIG_IIM_MAC_BANK     1

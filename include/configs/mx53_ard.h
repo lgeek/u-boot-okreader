@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * Configuration settings for the MX53-ARD Freescale board.
  *
@@ -39,6 +39,10 @@
 #define CONFIG_ARCH_MMU
 
 #define CONFIG_MX53_HCLK_FREQ	24000000
+#define CONFIG_SYS_PLL2_FREQ    400
+#define CONFIG_SYS_AHB_PODF     2
+#define CONFIG_SYS_AXIA_PODF    0
+#define CONFIG_SYS_AXIB_PODF    1
 
 #define CONFIG_DISPLAY_CPUINFO
 #define CONFIG_DISPLAY_BOARDINFO
@@ -171,7 +175,7 @@
 /*
  * FUSE Configs
  * */
-#ifdef CONFIG_CMD_MMC
+#ifdef CONFIG_CMD_IIM
 	#define CONFIG_IMX_IIM
 	#define IMX_IIM_BASE    IIM_BASE_ADDR
 	#define CONFIG_IIM_MAC_BANK     1
@@ -256,6 +260,7 @@
 
 /* Monitor at beginning of flash */
 #define CONFIG_FSL_ENV_IN_MMC
+/* #define CONFIG_FSL_ENV_IN_SATA */
 
 #define CONFIG_ENV_SECT_SIZE    (128 * 1024)
 #define CONFIG_ENV_SIZE         CONFIG_ENV_SECT_SIZE
@@ -266,11 +271,37 @@
 #elif defined(CONFIG_FSL_ENV_IN_MMC)
 	#define CONFIG_ENV_IS_IN_MMC	1
 	#define CONFIG_ENV_OFFSET	(768 * 1024)
+#elif defined(CONFIG_FSL_ENV_IN_SATA)
+	#define CONFIG_ENV_IS_IN_SATA   1
+	#define CONFIG_SATA_ENV_DEV     0
+	#define CONFIG_ENV_OFFSET       (768 * 1024)
 #elif defined(CONFIG_FSL_ENV_IN_SF)
 	#define CONFIG_ENV_IS_IN_SPI_FLASH	1
 	#define CONFIG_ENV_SPI_CS		1
 	#define CONFIG_ENV_OFFSET       (768 * 1024)
 #else
 	#define CONFIG_ENV_IS_NOWHERE	1
+#endif
+
+#ifdef CONFIG_SPLASH_SCREEN
+	/*
+	 * Framebuffer and LCD
+	 */
+	#define CONFIG_LCD
+	#define CONFIG_VIDEO_MX5
+	#define CONFIG_IPU_CLKRATE	200000000
+	#define CONFIG_SYS_CONSOLE_ENV_OVERWRITE
+	#define CONFIG_SYS_CONSOLE_OVERWRITE_ROUTINE
+	#define CONFIG_SYS_CONSOLE_IS_IN_ENV
+	#define LCD_BPP		LCD_COLOR16
+	#define CONFIG_CMD_BMP
+	#define CONFIG_BMP_8BPP
+	#define CONFIG_FB_BASE	(TEXT_BASE + 0x300000)
+	#define CONFIG_SPLASH_SCREEN_ALIGN
+	#define CONFIG_SYS_WHITE_ON_BLACK
+
+	#define CONFIG_IMX_PWM
+	#define IMX_PWM1_BASE    PWM1_BASE_ADDR
+	#define IMX_PWM2_BASE    PWM2_BASE_ADDR
 #endif
 #endif				/* __CONFIG_H */

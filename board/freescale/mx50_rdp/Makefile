@@ -18,13 +18,15 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston,
 # MA 02111-1307 USA
 #
+OPTFLAGS += -D_MX50_ -D__UBOOT__
 
 include $(TOPDIR)/config.mk
 
+
 LIB	= $(obj)lib$(BOARD).a
 
-COBJS	:= mx50_rdp.o
-SOBJS	:= lowlevel_init.o flash_header.o
+COBJS	:= mx50_rdp.o ntx_cmd.o ntx_hwconfig.o
+SOBJS	:= lowlevel_init.o flash_header.o mx50_overclock.o
 
 SRCS	:= $(SOBJS:.o=.S) $(COBJS:.o=.c)
 OBJS	:= $(addprefix $(obj),$(COBJS))

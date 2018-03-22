@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2007, Guennadi Liakhovetski <lg@denx.de>
  *
- * (C) Copyright 2009-2010 Freescale Semiconductor, Inc.
+ * (C) Copyright 2009-2011 Freescale Semiconductor, Inc.
  *
  * Configuration settings for the MX51-3Stack Freescale board.
  *
@@ -273,5 +273,24 @@
  */
 #undef CONFIG_JFFS2_CMDLINE
 #define CONFIG_JFFS2_DEV	"nand0"
+
+#ifdef CONFIG_SPLASH_SCREEN
+	/*
+	 * Framebuffer and LCD
+	 */
+	#define CONFIG_LCD
+	#define CONFIG_VIDEO_MX5
+	#define CONFIG_MXC_HSC
+	#define CONFIG_IPU_CLKRATE	133000000
+	#define CONFIG_SYS_CONSOLE_ENV_OVERWRITE
+	#define CONFIG_SYS_CONSOLE_OVERWRITE_ROUTINE
+	#define CONFIG_SYS_CONSOLE_IS_IN_ENV
+	#define LCD_BPP		LCD_COLOR16
+	#define CONFIG_CMD_BMP
+	#define CONFIG_BMP_8BPP
+	#define CONFIG_FB_BASE	(TEXT_BASE + 0x300000)
+	#define CONFIG_SPLASH_SCREEN_ALIGN
+	#define CONFIG_SYS_WHITE_ON_BLACK
+#endif
 
 #endif				/* __CONFIG_H */

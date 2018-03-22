@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  * Terry Lv <r65388@freescale.com>
  *
  * See file CREDITS for list of people who contributed to this
@@ -118,6 +118,7 @@ static inline void sdelay(u32 sec)
 		mdelay(1000);
 }
 
+#ifdef DWC_AHSATA_DEBUG
 void dprint_buffer(u8 *buf, s32 len)
 {
 	s32 i, j;
@@ -136,6 +137,7 @@ void dprint_buffer(u8 *buf, s32 len)
 	}
 	printf("\n\r");
 }
+#endif
 
 static inline u32 ahci_port_base(u32 base, u32 port)
 {
@@ -408,7 +410,7 @@ static int ahci_init_one(int pdev)
 	ahci_print_info(probe_ent);
 
 #ifdef CONFIG_ARCH_MMU
-	dma_buf = (u8 *)memalign(ATA_MAX_SECTORS * ATA_SECT_SIZE, 4);
+	dma_buf = (u8 *)memalign(4, ATA_MAX_SECTORS * ATA_SECT_SIZE);
 	if (NULL == dma_buf) {
 		printf("Fail to alloc buf for dma access!\n");
 		return 0;
@@ -558,7 +560,7 @@ static int ahci_port_start(struct ahci_probe_ent *probe_ent,
 		(struct sata_port_regs *)pp->port_mmio;
 	u32 port_status;
 	u32 mem;
-	int timeout = 1000;
+	int timeout = 10000000;
 
 	debug("Enter start port: %d\n", port);
 	port_status = readl(&(port_mmio->ssts));

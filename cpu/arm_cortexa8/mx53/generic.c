@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * See file CREDITS for list of people who contributed to this
  * project.
@@ -494,6 +494,8 @@ void mxc_dump_clocks(void)
 	printf("mx53 pll2: %dMHz\n", freq / 1000000);
 	freq = __decode_pll(PLL3_CLK, CONFIG_MX53_HCLK_FREQ);
 	printf("mx53 pll3: %dMHz\n", freq / 1000000);
+	freq = __decode_pll(PLL4_CLK, CONFIG_MX53_HCLK_FREQ);
+	printf("mx53 pll4: %dMHz\n", freq / 1000000);
 	printf("ipg clock     : %dHz\n", mxc_get_clock(MXC_IPG_CLK));
 	printf("ipg per clock : %dHz\n", mxc_get_clock(MXC_IPG_PERCLK));
 	printf("uart clock    : %dHz\n", mxc_get_clock(MXC_UART_CLK));
@@ -739,9 +741,13 @@ static int config_pll_clk(enum pll_clocks pll, struct pll_param *pll_param)
 		writel(ccsr & ~0x4, CCM_BASE_ADDR + CLKCTL_CCSR);
 		break;
 	case PLL2_CLK:
+		/* Switch to pll2 bypass clock */
+		writel(ccsr | 0x2, CCM_BASE_ADDR + CLKCTL_CCSR);
 		CHANGE_PLL_SETTINGS(pll_base, pll_param->pd,
 					pll_param->mfi, pll_param->mfn,
 					pll_param->mfd);
+		/* Switch back */
+		writel(ccsr & ~0x2, CCM_BASE_ADDR + CLKCTL_CCSR);
 		break;
 	case PLL3_CLK:
 		/* Switch to pll3 bypass clock */
@@ -842,8 +848,8 @@ static int config_periph_clk(u32 ref, u32 freq)
 		u32 old_nfc = __get_nfc_clk();
 
 		/* Switch peripheral to PLL3 */
-		writel((old_cbcmr & ~0x3000) | (1 << 12),
-			CCM_BASE_ADDR + CLKCTL_CBCMR);
+		writel(0x00015154, CCM_BASE_ADDR + CLKCTL_CBCMR);
+		writel(0x02888945, CCM_BASE_ADDR + CLKCTL_CBCDR);
 
 		/* Make sure change is effective */
 		while (readl(CCM_BASE_ADDR + CLKCTL_CDHIPR) != 0)
@@ -859,6 +865,7 @@ static int config_periph_clk(u32 ref, u32 freq)
 		config_pll_clk(PLL2_CLK, &pll_param);
 
 		/* Switch peripheral back */
+		writel(new_cbcdr, CCM_BASE_ADDR + CLKCTL_CBCDR);
 		writel(old_cbcmr, CCM_BASE_ADDR + CLKCTL_CBCMR);
 
 		/* Make sure change is effective */
@@ -906,7 +913,7 @@ static int config_ddr_clk(u32 emi_clk)
 		return -1;
 	}
 
-	if ((clk_src % emi_clk) == 0)
+	if ((clk_src % emi_clk) < 10000000)
 		div = clk_src / emi_clk;
 	else
 		div = (clk_src / emi_clk) + 1;
@@ -984,6 +991,7 @@ int print_cpuinfo(void)
 	       (get_board_rev() & 0xFF) >> 4,
 	       (get_board_rev() & 0xF),
 		__get_mcu_main_clk() / 1000000);
+	mxc_dump_clocks();
 	return 0;
 }
 #endif
@@ -1068,3 +1076,46 @@ void enable_usb_phy1_clk(unsigned char enable)
 	writel(reg, MXC_CCM_CCGR4);
 }
 
+void ipu_clk_enable(void)
+{
+	unsigned int reg;
+
+	/* IPU root clock deprived from AXI B */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CBCMR);
+	reg &= ~0xC0;
+	reg |= 0x40;
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CBCMR);
+
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCGR5);
+	reg |= (0x3 << 10);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCGR5);
+
+	/* Handshake with IPU when certain clock rates are changed. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCDR);
+	reg &= ~(0x1 << 21);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCDR);
+
+	/* Handshake with IPU when LPM is entered as its enabled. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CLPCR);
+	reg &= ~(0x1 << 18);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CLPCR);
+}
+
+void ipu_clk_disable(void)
+{
+	unsigned int reg;
+
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCGR5);
+	reg &= (0x3 << 10);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCGR5);
+
+	/* Handshake with IPU when certain clock rates are changed. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCDR);
+	reg |= (0x1 << 21);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCDR);
+
+	/* Handshake with IPU when LPM is entered as its enabled. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CLPCR);
+	reg |= (0x1 << 18);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CLPCR);
+}
