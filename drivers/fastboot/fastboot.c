@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,6 +33,7 @@
 #include <asm/io.h>
 #include <usbdevice.h>
 #include <mmc.h>
+#include <sata.h>
 
 /*
  * Defines
@@ -42,6 +43,24 @@
 #define CONFIG_USBD_OUT_PKTSIZE	    0x200
 #define CONFIG_USBD_IN_PKTSIZE	    0x200
 #define MAX_BUFFER_SIZE		    0x200
+
+/*
+ * imx family android layout
+ * mbr -  0 ~ 0x3FF byte
+ * bootloader - 0x400 ~ 0xFFFFF byte
+ * kernel - 0x100000 ~ 5FFFFF byte
+ * uramedisk - 0x600000 ~ 0x6FFFFF  supposing 1M temporarily
+ * SYSTEM partition - /dev/mmcblk0p2  or /dev/sda2
+ * RECOVERY parittion - dev/mmcblk0p4 or /dev/sda4
+ */
+#define ANDROID_MBR_OFFSET	    0
+#define ANDROID_MBR_SIZE	    0x200
+#define ANDROID_BOOTLOADER_OFFSET   0x400
+#define ANDROID_BOOTLOADER_SIZE	    0xFFC00
+#define ANDROID_KERNEL_OFFSET	    0x100000
+#define ANDROID_KERNEL_SIZE	    0x500000
+#define ANDROID_URAMDISK_OFFSET	    0x600000
+#define ANDROID_URAMDISK_SIZE	    0x100000
 
 #define STR_LANG_INDEX		    0x00
 #define STR_MANUFACTURER_INDEX	    0x01
@@ -61,6 +80,8 @@ enum {
     PTN_SYSTEM_INDEX,
     PTN_RECOVERY_INDEX
 };
+
+struct fastboot_device_info fastboot_devinfo;
 
 /* defined and used by gadget/ep0.c */
 extern struct usb_string_descriptor **usb_strings;
@@ -190,8 +211,8 @@ static void fastboot_event_handler(struct usb_device_instance *device,
 static int fastboot_cdc_setup(struct usb_device_request *request,
 				struct urb *urb);
 static int fastboot_usb_configured(void);
-#ifdef CONFIG_FASTBOOT_STORAGE_EMMC
-static void fastboot_init_mmc_ptable(void);
+#ifdef CONFIG_FASTBOOT_STORAGE_EMMC_SATA
+static int fastboot_init_mmc_sata_ptable(void);
 #endif
 
 /* utility function for converting char* to wide string used by USB */
@@ -210,12 +231,33 @@ static void str2wide(char *str, u16 * wide)
 }
 
 /*
+   Get mmc control number from passed string, eg, "mmc1" mean device 1. Only
+   support "mmc0" to "mmc9" currently. It will be treated as device 0 for
+   other string.
+*/
+static int get_mmc_no(char *env_str)
+{
+	int digit = 0;
+	unsigned char a;
+
+	if (env_str && (strlen(env_str) >= 4) &&
+	    !strncmp(env_str, "mmc", 3)) {
+		a = env_str[3];
+		if (a >= '0' && a <= '9')
+			digit = a - '0';
+	}
+
+	return digit;
+}
+
+/*
  * Initialize fastboot
  */
 int fastboot_init(struct cmd_fastboot_interface *interface)
 {
-	printf("fastboot is in init......");
+	char *fastboot_env;
 
+	printf("fastboot is in init......");
 	fastboot_interface = interface;
 	fastboot_interface->product_name = CONFIG_FASTBOOT_PRODUCT_NAME_STR;
 	fastboot_interface->serial_no = CONFIG_FASTBOOT_SERIAL_NUM;
@@ -229,8 +271,8 @@ int fastboot_init(struct cmd_fastboot_interface *interface)
 	udc_init();
 
 	fastboot_init_instances();
-#ifdef CONFIG_FASTBOOT_STORAGE_EMMC
-	fastboot_init_mmc_ptable();
+#ifdef CONFIG_FASTBOOT_STORAGE_EMMC_SATA
+	fastboot_init_mmc_sata_ptable();
 #endif
 	udc_startup_events(device_instance);
 	udc_connect();		/* Enable pullup for host detection */
@@ -238,54 +280,80 @@ int fastboot_init(struct cmd_fastboot_interface *interface)
 	return 0;
 }
 
-#ifdef CONFIG_FASTBOOT_STORAGE_EMMC
-static void fastboot_init_mmc_ptable(void)
+#ifdef CONFIG_FASTBOOT_STORAGE_EMMC_SATA
+static int fastboot_init_mmc_sata_ptable(void)
 {
-	int i;
+	int i, sata_device_no;
 	struct mmc *mmc;
 	block_dev_desc_t *dev_desc;
 	disk_partition_t info;
+	char *fastboot_env;
 	fastboot_ptentry ptable[PTN_RECOVERY_INDEX + 1];
 
-	mmc = find_mmc_device(CONFIG_FASTBOOT_MMC_NO);
-	if (mmc && mmc_init(mmc))
-		printf("MMC card init failed!\n");
+	fastboot_env = getenv("fastboot_dev");
+	/* sata case in env */
+	if (fastboot_env && !strcmp(fastboot_env, "sata")) {
+		fastboot_devinfo.type = DEV_SATA;
+#ifdef CONFIG_CMD_SATA
+		puts("flash target is SATA\n");
+		if (sata_initialize())
+			return -1;
+		sata_device_no = CONFIG_FASTBOOT_SATA_NO;
+		if (sata_device_no >= CONFIG_SYS_SATA_MAX_DEVICE) {
+			printf("Unknown SATA(%d) device for fastboot\n",
+				sata_device_no);
+			return -1;
+		}
+		dev_desc = sata_get_dev(sata_device_no);
+#else
+		puts("SATA isn't buildin\n");
+		return -1;
+#endif
+	} else {
+		int mmc_no = 0;
 
-	dev_desc = get_dev("mmc", CONFIG_FASTBOOT_MMC_NO);
-	if (NULL == dev_desc) {
-		printf("** Block device MMC %d not supported\n",
-			CONFIG_FASTBOOT_MMC_NO);
-		return;
+		mmc_no = get_mmc_no(fastboot_env);
+
+		fastboot_devinfo.type = DEV_MMC;
+		fastboot_devinfo.dev_id = mmc_no;
+
+		printf("flash target is MMC:%d\n", mmc_no);
+		mmc = find_mmc_device(mmc_no);
+		if (mmc && mmc_init(mmc))
+			printf("MMC card init failed!\n");
+
+		dev_desc = get_dev("mmc", mmc_no);
+		if (NULL == dev_desc) {
+			printf("** Block device MMC %d not supported\n",
+				mmc_no);
+			return -1;
+		}
 	}
 
 	memset((char *)ptable, 0,
 		    sizeof(fastboot_ptentry) * (PTN_RECOVERY_INDEX + 1));
-
-	/*
-	 * imx family android layout
-	 * mbr -  0 ~ 0x3FF byte
-	 * bootloader - 0x400 ~ 0xFFFFF byte
-	 * kernel - 0x100000 ~ 3FFFFF byte
-	 * uramedisk - 0x400000 ~ 0x4FFFFF  supposing 1M temporarily
-	 * SYSTEM partition - /dev/mmcblk0p2
-	 * RECOVERY parittion - dev/mmcblk0p6
-	 */
 	/* MBR */
 	strcpy(ptable[PTN_MBR_INDEX].name, "mbr");
-	ptable[PTN_MBR_INDEX].start = 0;
-	ptable[PTN_MBR_INDEX].length = 0x200;
+	ptable[PTN_MBR_INDEX].start = ANDROID_MBR_OFFSET / dev_desc->blksz;
+	ptable[PTN_MBR_INDEX].length = ANDROID_MBR_SIZE / dev_desc->blksz;
 	/* Bootloader */
 	strcpy(ptable[PTN_BOOTLOADER_INDEX].name, "bootloader");
-	ptable[PTN_BOOTLOADER_INDEX].start = 0x400;
-	ptable[PTN_BOOTLOADER_INDEX].length = 0xFFC00;
+	ptable[PTN_BOOTLOADER_INDEX].start =
+				ANDROID_BOOTLOADER_OFFSET / dev_desc->blksz;
+	ptable[PTN_BOOTLOADER_INDEX].length =
+				 ANDROID_BOOTLOADER_SIZE / dev_desc->blksz;
 	/* kernel */
 	strcpy(ptable[PTN_KERNEL_INDEX].name, "kernel");
-	ptable[PTN_KERNEL_INDEX].start = 0x100000;  /* 1M byte offset */
-	ptable[PTN_KERNEL_INDEX].length = 0x300000; /* 3M byte */
+	ptable[PTN_KERNEL_INDEX].start =
+				ANDROID_KERNEL_OFFSET / dev_desc->blksz;
+	ptable[PTN_KERNEL_INDEX].length =
+				ANDROID_KERNEL_SIZE / dev_desc->blksz;
 	/* uramdisk */
 	strcpy(ptable[PTN_URAMDISK_INDEX].name, "uramdisk");
-	ptable[PTN_URAMDISK_INDEX].start = 0x400000; /* 4M byte offset */
-	ptable[PTN_URAMDISK_INDEX].length = 0x100000;
+	ptable[PTN_URAMDISK_INDEX].start =
+				ANDROID_URAMDISK_OFFSET / dev_desc->blksz;
+	ptable[PTN_URAMDISK_INDEX].length =
+				ANDROID_URAMDISK_SIZE / dev_desc->blksz;
 
 	/* system partition */
 	strcpy(ptable[PTN_SYSTEM_INDEX].name, "system");
@@ -294,10 +362,8 @@ static void fastboot_init_mmc_ptable(void)
 		printf("Bad partition index:%d\n",
 			CONFIG_ANDROID_SYSTEM_PARTITION_MMC);
 	else {
-		ptable[PTN_SYSTEM_INDEX].start = info.start *
-						    mmc->write_bl_len;
-		ptable[PTN_SYSTEM_INDEX].length = info.size *
-						    mmc->write_bl_len;
+		ptable[PTN_SYSTEM_INDEX].start = info.start;
+		ptable[PTN_SYSTEM_INDEX].length = info.size;
 	}
 	/* recovery partition */
 	strcpy(ptable[PTN_RECOVERY_INDEX].name, "recovery");
@@ -306,14 +372,14 @@ static void fastboot_init_mmc_ptable(void)
 		printf("Bad partition index:%d\n",
 			CONFIG_ANDROID_RECOVERY_PARTITION_MMC);
 	else {
-		ptable[PTN_RECOVERY_INDEX].start = info.start *
-							mmc->write_bl_len;
-		ptable[PTN_RECOVERY_INDEX].length = info.size *
-							mmc->write_bl_len;
+		ptable[PTN_RECOVERY_INDEX].start = info.start;
+		ptable[PTN_RECOVERY_INDEX].length = info.size;
 	}
 
 	for (i = 0; i <= PTN_RECOVERY_INDEX; i++)
 		fastboot_flash_add_ptn(&ptable[i]);
+
+	return 0;
 }
 #endif
 
@@ -689,3 +755,4 @@ int fastboot_cdc_setup(struct usb_device_request *request, struct urb *urb)
 {
 	return 0;
 }
+

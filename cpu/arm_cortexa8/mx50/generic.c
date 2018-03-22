@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc. All Rights Reserved.
  *
  * See file CREDITS for list of people who contributed to this
  * project.
@@ -356,8 +356,7 @@ static u32 __get_ddr_clk(void)
 			clk /= ddr_pll_div;
 		ret_val = clk;
 	} else {
-
-		printf("Warning, Fixme Not handle PFD1 mux\n");
+		printf("Warning, Fixme Not handle PFD0 mux\n");
 	}
 
 	return ret_val;
@@ -545,6 +544,57 @@ static u32 __get_bch_clk(void)
 }
 
 #endif
+
+void set_usboh3_clk(void)
+{
+	unsigned int reg;
+
+	reg = readl(MXC_CCM_CSCMR1) &
+		~MXC_CCM_CSCMR1_USBOH3_CLK_SEL_MASK;
+	reg |= 1 << MXC_CCM_CSCMR1_USBOH3_CLK_SEL_OFFSET;
+	writel(reg, MXC_CCM_CSCMR1);
+
+	reg = readl(MXC_CCM_CSCDR1);
+	reg &= ~MXC_CCM_CSCDR1_USBOH3_CLK_PODF_MASK;
+	reg &= ~MXC_CCM_CSCDR1_USBOH3_CLK_PRED_MASK;
+	reg |= 4 << MXC_CCM_CSCDR1_USBOH3_CLK_PRED_OFFSET;
+	reg |= 1 << MXC_CCM_CSCDR1_USBOH3_CLK_PODF_OFFSET;
+
+	writel(reg, MXC_CCM_CSCDR1);
+}
+
+void set_usb_phy1_clk(void)
+{
+	unsigned int reg;
+
+	reg = readl(MXC_CCM_CSCMR1);
+	reg &= ~MXC_CCM_CSCMR1_USB_PHY_CLK_SEL;
+	writel(reg, MXC_CCM_CSCMR1);
+}
+
+void enable_usboh3_clk(unsigned char enable)
+{
+	unsigned int reg;
+
+	reg = readl(MXC_CCM_CCGR2);
+	if (enable)
+		reg |= 1 << MXC_CCM_CCGR2_CG14_OFFSET;
+	else
+		reg &= ~(1 << MXC_CCM_CCGR2_CG14_OFFSET);
+	writel(reg, MXC_CCM_CCGR2);
+}
+
+void enable_usb_phy1_clk(unsigned char enable)
+{
+	unsigned int reg;
+
+	reg = readl(MXC_CCM_CCGR4);
+	if (enable)
+		reg |= 1 << MXC_CCM_CCGR4_CG5_OFFSET;
+	else
+		reg &= ~(1 << MXC_CCM_CCGR4_CG5_OFFSET);
+	writel(reg, MXC_CCM_CCGR4);
+}
 
 unsigned int mxc_get_clock(enum mxc_clock clk)
 {
@@ -963,8 +1013,8 @@ int config_ddr_clk(u32 emi_clk)
 {
 	u32 clk_src;
 	s32 shift = 0, clk_sel, div = 1;
-	u32 cbcmr = readl(CCM_BASE_ADDR + CLKCTL_CBCMR);
-	u32 cbcdr = readl(CCM_BASE_ADDR + CLKCTL_CBCDR);
+	u32 clk_ddr = __REG(MXC_CCM_CLK_DDR);
+	u32 ddr_clk_sel = clk_ddr & MXC_CCM_CLK_DDR_DDR_PFD_SEL;
 
 	if (emi_clk > MAX_DDR_CLK) {
 		printf("DDR clock should be less than"
@@ -973,36 +1023,23 @@ int config_ddr_clk(u32 emi_clk)
 		emi_clk = MAX_DDR_CLK;
 	}
 
-	clk_src = __get_periph_clk();
-	/* Find DDR clock input */
-	clk_sel = (cbcmr >> 10) & 0x3;
-	switch (clk_sel) {
-	case 0:
-		shift = 16;
-		break;
-	case 1:
-		shift = 19;
-		break;
-	case 2:
-		shift = 22;
-		break;
-	case 3:
-		shift = 10;
-		break;
-	default:
-		return -1;
+	if (!ddr_clk_sel)
+		clk_src = __decode_pll(PLL1_CLK, CONFIG_MX50_HCLK_FREQ);
+	else {
+		printf("Warning, Fixme Not handle PFD1 mux\n");
+		return 0;
 	}
 
-	if ((clk_src % emi_clk) == 0)
+	if ((clk_src % emi_clk) < 10000000)
 		div = clk_src / emi_clk;
 	else
 		div = (clk_src / emi_clk) + 1;
-	if (div > 8)
-		div = 8;
+	if (div > 64)
+		div = 64;
 
-	cbcdr = cbcdr & ~(0x7 << shift);
-	cbcdr |= ((div - 1) << shift);
-	writel(cbcdr, CCM_BASE_ADDR + CLKCTL_CBCDR);
+	clk_ddr = clk_ddr & ~0x3f;
+	clk_ddr |= (div - 1);
+	writel(clk_ddr, MXC_CCM_CLK_DDR);
 	while (readl(CCM_BASE_ADDR + CLKCTL_CDHIPR) != 0)
 		;
 	writel(0x0, CCM_BASE_ADDR + CLKCTL_CCDR);

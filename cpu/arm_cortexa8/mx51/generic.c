@@ -2,7 +2,7 @@
  * (C) Copyright 2007
  * Sascha Hauer, Pengutronix
  *
- * (C) Copyright 2009-2010 Freescale Semiconductor, Inc.
+ * (C) Copyright 2009-2011 Freescale Semiconductor, Inc.
  *
  * See file CREDITS for list of people who contributed to this
  * project.
@@ -243,24 +243,32 @@ static u32 __get_ddr_clk(void)
 {
 	u32 ret_val = 0;
 	u32 cbcmr = __REG(MXC_CCM_CBCMR);
+	u32 cbcdr = __REG(MXC_CCM_CBCDR);
 	u32 ddr_clk_sel = (cbcmr & MXC_CCM_CBCMR_DDR_CLK_SEL_MASK) \
 				>> MXC_CCM_CBCMR_DDR_CLK_SEL_OFFSET;
 
-	switch (ddr_clk_sel) {
-	case 0:
-		ret_val =  __get_axi_a_clk();
-		break;
-	case 1:
-		ret_val =  __get_axi_b_clk();
-		break;
-	case 2:
-		ret_val =  __get_emi_slow_clk();
-		break;
-	case 3:
-		ret_val =  __get_ahb_clk();
-		break;
-	default:
-		break;
+	if (((cbcdr >> 30) & 0x1) == 0x1) {
+		u32 ddr_clk_podf = (cbcdr >> 27) & 0x7;
+
+		ret_val = __decode_pll(PLL1_CLK, CONFIG_MX51_HCLK_FREQ)
+			/ (ddr_clk_podf + 1);
+	} else {
+		switch (ddr_clk_sel) {
+		case 0:
+			ret_val =  __get_axi_a_clk();
+			break;
+		case 1:
+			ret_val =  __get_axi_b_clk();
+			break;
+		case 2:
+			ret_val =  __get_emi_slow_clk();
+			break;
+		case 3:
+			ret_val =  __get_ahb_clk();
+			break;
+		default:
+			break;
+		}
 	}
 
 	return ret_val;
@@ -562,6 +570,28 @@ int clk_info(u32 clk_type)
 		(tmp - 1);	\
 	})
 
+#define calc_pred_n_podf(target_clk, src_clk, p_pred, p_podf, pred_limit, podf_limit) {	\
+		u32 div = calc_div(target_clk, src_clk,	\
+				pred_limit * podf_limit);	\
+		u32 tmp = 0, tmp_i = 0, tmp_j = 0;	\
+		if (div > (pred_limit * podf_limit))	{\
+			tmp_i = pred_limit;	\
+			tmp_j = podf_limit;	\
+		}	\
+		for (tmp_i = 1; tmp_i <= pred_limit; ++tmp_i) {	\
+			for (tmp_j = 1; tmp_j <= podf_limit; ++tmp_j) {	\
+				if (div == (tmp_i * tmp_j)) {	\
+					tmp = 1;	\
+					break;	\
+				}	\
+			}	\
+			if (1 == tmp)	\
+				break;	\
+		}	\
+		*p_pred = tmp_j - 1;	\
+		*p_podf = tmp_i - 1;	\
+	}
+
 static u32 calc_per_cbcdr_val(u32 per_clk, u32 cbcmr)
 {
 	u32 cbcdr = __REG(MXC_CCM_CBCDR);
@@ -597,6 +627,29 @@ static u32 calc_per_cbcdr_val(u32 per_clk, u32 cbcmr)
 	cbcdr |= (div << MXC_CCM_CBCDR_AHB_PODF_OFFSET);
 
 	return cbcdr;
+}
+
+static u32 calc_per_cscdr1_val(u32 per_clk)
+{
+	u32 cscdr1 = __REG(MXC_CCM_CSCDR1);
+	u32 tmp_clk = 0, pred, podf;
+
+	/*
+	 * Currently, most clocks in scsmr1 will use pll3 as clock source,
+	 * except uart.
+	 * So we will just adjust uart clock here.
+	 */
+	tmp_clk = __get_uart_clk();
+	calc_pred_n_podf(tmp_clk, per_clk, &pred, &podf, 8, 8);
+
+	cscdr1 &=
+		!(MXC_CCM_CSCDR1_UART_CLK_PRED_MASK
+		| MXC_CCM_CSCDR1_UART_CLK_PODF_MASK);
+
+	cscdr1 |= (pred << MXC_CCM_CSCDR1_UART_CLK_PRED_OFFSET);
+	cscdr1 |= (podf << MXC_CCM_CSCDR1_UART_CLK_PODF_OFFSET);
+
+	return cscdr1;
 }
 
 #define CHANGE_PLL_SETTINGS(base, pd, mfi, mfn, mfd) \
@@ -732,8 +785,21 @@ static int config_periph_clk(u32 ref, u32 freq)
 			return -1;
 		}
 	} else {
+		u32 pll3_freq = __decode_pll(PLL3_CLK, CONFIG_MX51_HCLK_FREQ);
+		u32 old_pll2_freq =
+			__decode_pll(PLL2_CLK, CONFIG_MX51_HCLK_FREQ);
 		u32 old_cbcmr = readl(CCM_BASE_ADDR + CLKCTL_CBCMR);
 		u32 new_cbcdr = calc_per_cbcdr_val(pll, old_cbcmr);
+		u32 new_cscdr1 = calc_per_cscdr1_val(pll);
+
+		/* Set PLL3 to PLL2 freq */
+		ret = calc_pll_params(ref, old_pll2_freq, &pll_param);
+		if (ret != 0) {
+			printf("Can't find pll parameters: %d\n",
+				ret);
+			return ret;
+		}
+		config_pll_clk(PLL3_CLK, &pll_param);
 
 		/* Switch peripheral to PLL3 */
 		/* Disable IPU and HSC dividers */
@@ -760,11 +826,22 @@ static int config_periph_clk(u32 ref, u32 freq)
 		writel(0x60000, CCM_BASE_ADDR + CLKCTL_CCDR);
 		writel(new_cbcdr, CCM_BASE_ADDR + CLKCTL_CBCDR);
 		writel(old_cbcmr, CCM_BASE_ADDR + CLKCTL_CBCMR);
+		writel(new_cscdr1, CCM_BASE_ADDR + CLKCTL_CSCDR1);
+
+		/* Switch PLL3's freq back */
+		ret = calc_pll_params(ref, pll3_freq, &pll_param);
+		if (ret != 0) {
+			printf("Can't find pll parameters: %d\n",
+				ret);
+			return ret;
+		}
+		config_pll_clk(PLL3_CLK, &pll_param);
 
 		/* Make sure change is effective */
 		while (readl(CCM_BASE_ADDR + CLKCTL_CDHIPR) != 0)
 			;
 		writel(0x0, CCM_BASE_ADDR + CLKCTL_CCDR);
+
 		puts("\n");
 	}
 
@@ -810,7 +887,7 @@ static int config_ddr_clk(u32 emi_clk)
 		}
 	}
 
-	if ((clk_src % emi_clk) == 0)
+	if ((clk_src % emi_clk) < 10000000)
 		div = clk_src / emi_clk;
 	else
 		div = (clk_src / emi_clk) + 1;
@@ -982,3 +1059,46 @@ void enable_usb_phy1_clk(unsigned char enable)
 	writel(reg, MXC_CCM_CCGR2);
 }
 
+void ipu_clk_enable(void)
+{
+	unsigned int reg;
+
+	/* IPU root clock deprived from AXI B */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CBCMR);
+	reg &= ~0xC0;
+	reg |= 0x40;
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CBCMR);
+
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCGR5);
+	reg |= (0x3 << 10);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCGR5);
+
+	/* Handshake with IPU when certain clock rates are changed. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCDR);
+	reg &= ~(0x1 << 17);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCDR);
+
+	/* Handshake with IPU when LPM is entered as its enabled. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CLPCR);
+	reg &= ~(0x1 << 18);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CLPCR);
+}
+
+void ipu_clk_disable(void)
+{
+	unsigned int reg;
+
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCGR5);
+	reg &= (0x3 << 10);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCGR5);
+
+	/* Handshake with IPU when certain clock rates are changed. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CCDR);
+	reg |= (0x1 << 17);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CCDR);
+
+	/* Handshake with IPU when LPM is entered as its enabled. */
+	reg = readl(CCM_BASE_ADDR + CLKCTL_CLPCR);
+	reg |= (0x1 << 18);
+	writel(reg, CCM_BASE_ADDR + CLKCTL_CLPCR);
+}

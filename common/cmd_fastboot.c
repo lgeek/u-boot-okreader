@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * Copyright 2008 - 2009 (C) Wind River Systems, Inc.
  * Tom Rix <Tom.Rix@windriver.com>
@@ -69,8 +69,11 @@ extern int do_reset(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[]);
 /* Use do_nand for fastboot's flash commands */
 #if defined(CONFIG_FASTBOOT_STORAGE_NAND)
 extern int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[]);
-#elif defined(CONFIG_FASTBOOT_STORAGE_EMMC)
+#elif defined(CONFIG_FASTBOOT_STORAGE_EMMC_SATA)
 extern int do_mmcops(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[]);
+#if defined(CONFIG_CMD_SATA)
+extern int do_sata(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[]);
+#endif
 extern env_t *env_ptr;
 #endif
 /* Use do_setenv and do_saveenv to permenantly save data */
@@ -95,6 +98,8 @@ static struct cmd_fastboot_interface interface = {
 	.transfer_buffer_size  = 0,
 };
 
+extern struct fastboot_device_info fastboot_devinfo;
+
 static unsigned int download_size;
 static unsigned int download_bytes;
 static unsigned int download_bytes_unpadded;
@@ -103,11 +108,10 @@ static unsigned int continue_booting;
 static unsigned int upload_size;
 static unsigned int upload_bytes;
 static unsigned int upload_error;
-static unsigned int mmc_controller_no;
 
 /* To support the Android-style naming of flash */
 #define MAX_PTN		    16
-#define MMC_BLOCK_SIZE	    512
+#define MMC_SATA_BLOCK_SIZE 512
 
 static fastboot_ptentry ptable[MAX_PTN];
 static unsigned int pcount;
@@ -930,59 +934,12 @@ static int rx_handler (const unsigned char *buffer, unsigned int buffer_size)
 					printf("partition '%s' erased\n", ptn->name);
 					sprintf(response, "OKAY");
 				}
-
 			}
-#elif defined(CONFIG_FASTBOOT_STORAGE_EMMC)
-			struct fastboot_ptentry *ptn;
-
-#ifdef CONFIG_DYNAMIC_MMC_DEVNO
-			mmc_controller_no = get_mmc_env_devno();
-#else
-			/* Save the MMC controller number */
-			mmc_controller_no = CONFIG_FASTBOOT_MMC_NO;
-#endif
-			/* Find the partition and erase it */
-			ptn = fastboot_flash_find_ptn(cmdbuf + 6);
-
-			if (ptn == 0) {
-				sprintf(response, "FAIL: partition doesn't exist");
-			} else {
-				/* Call MMC erase function here */
-				char start[32], length[32];
-				char slot_no[32];
-
-				char *erase[5] = {"mmc", "erase",
-						    NULL, NULL, NULL};
-				char *mmc_init[2] = {"mmcinit", NULL};
-
-				mmc_init[1] = slot_no;
-				erase[2] = slot_no;
-				erase[3] = start;
-				erase[4] = length;
-
-				sprintf(slot_no, "%d", mmc_controller_no);
-				sprintf(length, "0x%x",
-					    ptn->length / MMC_BLOCK_SIZE);
-				sprintf(start, "0x%x",
-					    ptn->start / MMC_BLOCK_SIZE);
-
-				printf("Initializing '%s'\n", ptn->name);
-				if (do_mmcops(NULL, 0, 2, mmc_init))
-					sprintf(response, "FAIL: Init of MMC card");
-				else
-					sprintf(response, "OKAY");
-
-				printf("Erasing '%s'\n", ptn->name);
-				if (do_mmcops(NULL, 0, 5, erase)) {
-					printf("Erasing '%s' FAILED!\n", ptn->name);
-					sprintf(response, "FAIL: Erase partition");
-				} else {
-					printf("Erasing '%s' DONE!\n", ptn->name);
-					sprintf(response, "OKAY");
-				}
-			}
-#endif
 			ret = 0;
+#else
+			printf("Not support erase command for EMMC\n");
+			ret = -1;
+#endif
 		}
 
 		/* download
@@ -1150,23 +1107,17 @@ static int rx_handler (const unsigned char *buffer, unsigned int buffer_size)
 			} else {
 				sprintf(response, "FAILno image downloaded");
 			}
-#elif defined(CONFIG_FASTBOOT_STORAGE_EMMC)
+#elif defined(CONFIG_FASTBOOT_STORAGE_EMMC_SATA)
 			if (download_bytes) {
-
 				struct fastboot_ptentry *ptn;
 
-#ifdef CONFIG_DYNAMIC_MMC_DEVNO
-				mmc_controller_no = get_mmc_env_devno();
-#else
-				/* Save the MMC controller number */
-				mmc_controller_no = CONFIG_FASTBOOT_MMC_NO;
-#endif
 				/* Next is the partition name */
 				ptn = fastboot_flash_find_ptn(cmdbuf + 6);
 				if (ptn == 0) {
 					printf("Partition:'%s' does not exist\n", ptn->name);
 					sprintf(response, "FAILpartition does not exist");
-				} else if ((download_bytes > ptn->length) &&
+				} else if ((download_bytes >
+					   ptn->length * MMC_SATA_BLOCK_SIZE) &&
 						!(ptn->flags & FASTBOOT_PTENTRY_FLAGS_WRITE_ENV)) {
 					printf("Image too large for the partition\n");
 					sprintf(response, "FAILimage too large for partition");
@@ -1191,12 +1142,53 @@ static int rx_handler (const unsigned char *buffer, unsigned int buffer_size)
 					printf("saveenv to '%s' DONE!\n", ptn->name);
 					sprintf(response, "OKAY");
 				} else {
-				/* Normal case */
-
-					char source[32], dest[32], length[32];
-					char slot_no[32];
+					char source[32], dest[32];
+					char length[32], slot_no[32];
 					unsigned int temp;
 
+					/* Normal case */
+					if (fastboot_devinfo.type == DEV_MMC)
+						/* download to mmc */
+						goto mmc_ops;
+					else {
+						/* downaload to sata */
+#ifdef CONFIG_CMD_SATA
+					char *sata_write[5] = {"sata", "write",
+						NULL, NULL, NULL};
+
+					sata_write[2] = source;
+					sata_write[3] = dest;
+					sata_write[4] = length;
+
+					sprintf(source, "0x%x",
+						 interface.transfer_buffer);
+					/* block offset */
+					sprintf(dest, "0x%x", ptn->start);
+					/* block count */
+					temp = (download_bytes +
+						MMC_SATA_BLOCK_SIZE - 1) /
+							MMC_SATA_BLOCK_SIZE;
+					sprintf(length, "0x%x", temp);
+					if (do_sata(NULL, 0, 5, sata_write)) {
+						printf("Writing '%s' FAILED!\n",
+							 ptn->name);
+						sprintf(response,
+						       "FAIL: Write partition");
+					} else {
+						printf("Writing '%s' DONE!\n",
+							ptn->name);
+						sprintf(response, "OKAY");
+						ret = 0;
+					}
+#else
+					sprintf(response, "FAIL: Not support");
+#endif
+					fastboot_tx_status(response,
+							    strlen(response));
+					return ret; /* End of sata download */
+				}
+
+mmc_ops:
 					printf("writing to partition '%s'\n", ptn->name);
 					char *mmc_write[6] = {"mmc", "write",
 							NULL, NULL, NULL, NULL};
@@ -1208,16 +1200,16 @@ static int rx_handler (const unsigned char *buffer, unsigned int buffer_size)
 					mmc_write[4] = dest;
 					mmc_write[5] = length;
 
-					sprintf(slot_no, "%d", mmc_controller_no);
+					sprintf(slot_no, "%d",
+						    fastboot_devinfo.dev_id);
 					sprintf(source, "0x%x", interface.transfer_buffer);
 
 					/* block offset */
-					temp = ptn->start / MMC_BLOCK_SIZE;
-					sprintf(dest, "0x%x", temp);
+					sprintf(dest, "0x%x", ptn->start);
 					/* block count */
 					temp = (download_bytes +
-						    MMC_BLOCK_SIZE - 1) /
-						    MMC_BLOCK_SIZE;
+						    MMC_SATA_BLOCK_SIZE - 1) /
+						    MMC_SATA_BLOCK_SIZE;
 					sprintf(length, "0x%x", temp);
 
 					printf("Initializing '%s'\n", ptn->name);

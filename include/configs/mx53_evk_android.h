@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  *
  * Configuration settings for the MX53-EVK Freescale board.
  *
@@ -39,6 +39,10 @@
 #define CONFIG_ARCH_MMU
 
 #define CONFIG_MX53_HCLK_FREQ	24000000
+#define CONFIG_SYS_PLL2_FREQ    600
+#define CONFIG_SYS_AHB_PODF     4
+#define CONFIG_SYS_AXIA_PODF    1
+#define CONFIG_SYS_AXIB_PODF    2
 
 #define CONFIG_DISPLAY_CPUINFO
 #define CONFIG_DISPLAY_BOARDINFO
@@ -76,7 +80,8 @@
 /* Android fastboot configs */
 #define CONFIG_USB_DEVICE
 #define CONFIG_FASTBOOT                1
-#define CONFIG_FASTBOOT_STORAGE_EMMC
+#define CONFIG_IMX_UDC                 1
+#define CONFIG_FASTBOOT_STORAGE_EMMC_SATA
 #define CONFIG_FASTBOOT_VENDOR_ID      0xbb4
 #define CONFIG_FASTBOOT_PRODUCT_ID     0xc01
 #define CONFIG_FASTBOOT_BCD_DEVICE     0x311
@@ -85,7 +90,6 @@
 #define CONFIG_FASTBOOT_CONFIGURATION_STR  "Android fastboot"
 #define CONFIG_FASTBOOT_INTERFACE_STR    "Android fastboot"
 #define CONFIG_FASTBOOT_SERIAL_NUM      "12345"
-#define CONFIG_FASTBOOT_MMC_NO          0
 #define CONFIG_FASTBOOT_TRANSFER_BUF    0x80000000
 #define CONFIG_FASTBOOT_TRANSFER_BUF_SIZE 0x8000000 /* 128M byte */
 
@@ -98,7 +102,7 @@
 #define CONFIG_ANDROID_RECOVERY_BOOTARGS_MMC \
 	"setenv bootargs ${bootargs} init=/init root=/dev/mmcblk0p4 rootfs=ext4"
 #define CONFIG_ANDROID_RECOVERY_BOOTCMD_MMC  \
-	"run bootargs_base bootargs_android_recovery;mmc read 0 ${loadaddr} 0x800 0x1800;bootm"
+	"run bootargs_base bootargs_android_recovery;mmc read 0 ${loadaddr} 0x800 0x2000;bootm"
 #define CONFIG_ANDROID_RECOVERY_CMD_FILE "/recovery/command"
 
 #define CONFIG_ANDROID_SYSTEM_PARTITION_MMC 2
@@ -151,7 +155,7 @@
 #define CONFIG_PRIME	"FEC0"
 
 #define CONFIG_LOADADDR		0x70800000	/* loadaddr env var */
-#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x300000)
+#define CONFIG_RD_LOADADDR	(CONFIG_LOADADDR + 0x400000)
 
 
 #define	CONFIG_EXTRA_ENV_SETTINGS					\
@@ -160,25 +164,25 @@
 		"uboot=u-boot.bin\0"					\
 		"kernel=uImage\0"					\
 		"loadaddr=0x70800000\0"					\
-		"rd_loadaddr=0x70B00000\0"				\
+		"rd_loadaddr=0x70C00000\0"				\
 		"nfsroot=/opt/eldk/arm\0"				\
 		"bootargs_base=setenv bootargs ${bootargs} "		\
-		"console=ttymxc0,115200\0"				\
+		"console=ttymxc0,115200 gpu_memory=16M\0"		\
 		"bootargs_nfs=setenv bootargs ${bootargs} root=/dev/nfs " \
 		     "ip=dhcp nfsroot=${serverip}:${nfsroot},v3,tcp\0"	\
-		"bootargs_android=setenv bootargs ${bootargs} mem=512M " \
-		     "androidboot.console=ttymxc0 init=/init "		\
+		"bootargs_android=setenv bootargs ${bootargs} " \
+		     "androidboot.console=ttymxc0 init=/init di0_primary" \
 		     "video=mxcdi0fb:RGB565,800x480M@55 calibration\0"	\
 		"bootcmd=run bootcmd_SD \0"				\
 		"bootcmd_SD=run bootargs_base bootargs_android;"	\
-		     "mmc read 0 ${loadaddr} 0x800 1800;"		\
-		     "mmc read 0 ${rd_loadaddr} 0x2000 0x258;"		\
+		     "mmc read 0 ${loadaddr} 0x800 2000;"		\
+		     "mmc read 0 ${rd_loadaddr} 0x3000 0x258;"		\
 		     "bootm ${loadaddr} ${rd_loadaddr}\0"		\
 		"bootcmd_net=run bootargs_base bootargs_nfs; "		\
 			"tftpboot ${loadaddr} ${kernel}; bootm\0"	\
 		"bootcmd_android_recovery=run bootargs_base"		\
 		     " bootargs_android_recovery;"			\
-		     "mmc read 0 ${loadaddr} 0x800 0x1800;bootm\0"	\
+		     "mmc read 0 ${loadaddr} 0x800 0x2000;bootm\0"	\
 		"bootargs_android_recovery=setenv bootargs ${bootargs}" \
 		     " init=/init root=/dev/mmcblk0p4 rootfs=ext4\0"	\
 
@@ -223,7 +227,7 @@
 /*
  * FUSE Configs
  * */
-#ifdef CONFIG_CMD_MMC
+#ifdef CONFIG_CMD_IIM
 	#define CONFIG_IMX_IIM
 	#define IMX_IIM_BASE    IIM_BASE_ADDR
 	#define CONFIG_IIM_MAC_BANK     1

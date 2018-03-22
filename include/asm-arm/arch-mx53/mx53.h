@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc. All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,10 +24,9 @@
 #define __REG8(x)       (*((volatile u8 *)(x)))
 
 /*
-  * ROM address which denotes silicon rev
-  */
-#define ROM_SI_REV	0x48
-
+ *ROM address which denotes silicon rev
+ */
+#define ROM_SI_REV     0x48
 /*
  * SATA
  */
@@ -39,6 +38,11 @@
 #define IRAM_BASE_ADDR		0xF8000000	/* internal ram */
 #define IRAM_PARTITIONS		16
 #define IRAM_SIZE		(IRAM_PARTITIONS*SZ_8K)	/* 128KB */
+
+/*
+ * IPU
+ */
+#define IPU_CTRL_BASE_ADDR	0x0
 
 /*
  * NFC
@@ -343,10 +347,23 @@
 
 #define CHIP_REV_1_0            0x10
 #define CHIP_REV_2_0            0x20
+#define CHIP_REV_2_1            0x21
+#define CHIP_REV_UNKNOWN        0xff
+
+#define BOARD_REV_1             0x000
+#define BOARD_REV_2             0x100
+#define BOARD_REV_3             0x200
+#define BOARD_REV_4             0x300
+#define BOARD_REV_5             0x400
+
 #define PLATFORM_ICGC           0x14
 
 /* Assuming 24MHz input clock with doubler ON */
 /*                            MFI         PDF */
+#define DP_OP_1000	((10 << 4) + ((1 - 1) << 0))
+#define DP_MFD_1000	(12 - 1)
+#define DP_MFN_1000	5
+
 #define DP_OP_850       ((8 << 4) + ((1 - 1)  << 0))
 #define DP_MFD_850      (48 - 1)
 #define DP_MFN_850      41
@@ -370,6 +387,10 @@
 #define DP_OP_532       ((5 << 4) + ((1 - 1)  << 0))
 #define DP_MFD_532      (24 - 1)
 #define DP_MFN_532      13
+
+#define DP_OP_455       ((8 << 4) + ((2 - 1)  << 0))
+#define DP_MFD_455      (48 - 1)
+#define DP_MFN_455      71
 
 #define DP_OP_400       ((8 << 4) + ((2 - 1)  << 0))
 #define DP_MFD_400      (3 - 1)

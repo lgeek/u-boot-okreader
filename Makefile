@@ -3254,7 +3254,13 @@ mx50_arm2_iram_config \
 mx50_arm2_config  \
 mx50_arm2_mfg_config \
 mx50_rdp_iram_config \
+mx50_rd3_config \
+mx50_rd3_mfg_config \
 mx50_rdp_mfg_config \
+mx50_rdp_android_config \
+mx50_rdp_mddr_128_config \
+mx50_rdp_ddr2_128_config \
+mx50_rdp_mddr_512_config \
 mx50_rdp_config      : unconfig
 	@[ -z "$(findstring iram_,$@)" ] || \
 		{ echo "TEXT_BASE = 0xF8008400" >$(obj)board/freescale/mx50_rdp/config.tmp ; \
@@ -3276,16 +3282,26 @@ mx51_3stack_android_config	\
 mx51_3stack_config	: unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx51_3stack freescale mx51
 
+mx53_smd_mfg_config             \
+mx53_smd_android_config		\
+mx53_smd_config		:unconfig
+	$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx53_smd freescale mx53
+
+mx53_loco_mfg_config		\
+mx53_loco_config	:unconfig
+	$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx53_loco freescale mx53
+
+mx53_ard_ddr3_config		\
 mx53_ard_mfg_config		\
-mx53_evk_mfg_config 		\
+mx53_ard_config		: unconfig
+	$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx53_ard freescale mx53
+
 mx53_arm2_ddr3_config		\
-mx53_arm2_config		\
-mx53_arm2_android_config	\
 mx53_arm2_ddr3_android_config	\
 mx53_evk_android_config		\
-mx53_ard_config			\
+mx53_evk_mfg_config             \
 mx53_evk_config      : unconfig
-	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx53_rd freescale mx53
+	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx53_evk freescale mx53
 
 omap2420h4_config	: unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm1136 omap2420h4 NULL omap24xx

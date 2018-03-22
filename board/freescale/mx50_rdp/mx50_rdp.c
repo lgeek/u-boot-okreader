@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2007, Guennadi Liakhovetski <lg@denx.de>
  *
- * (C) Copyright 2009-2010 Freescale Semiconductor, Inc.
+ * (C) Copyright 2009-2011 Freescale Semiconductor, Inc.
  *
  * See file CREDITS for list of people who contributed to this
  * project.
@@ -28,6 +28,7 @@
 #include <asm/arch/mx50_pins.h>
 #include <asm/arch/iomux.h>
 #include <asm/errno.h>
+#include <asm/sizes.h>
 
 #ifdef CONFIG_IMX_CSPI
 #include <imx_spi.h>
@@ -56,10 +57,106 @@
 #include <lcd.h>
 #endif
 
+#ifdef CONFIG_ANDROID_RECOVERY
+#include "../common/recovery.h"
+#include <part.h>
+#include <ext2fs.h>
+#include <linux/mtd/mtd.h>
+#include <linux/mtd/partitions.h>
+#include <ubi_uboot.h>
+#include <jffs2/load_kernel.h>
+#endif
+
+#include "ntx_comm.h"
+#include "ntx_comm.c"
+
+#include "ntx_hwconfig.h"
+extern NTX_HWCONFIG *gptNtxHwCfg ;
+
+#ifdef CONFIG_I2C_MULTI_BUS//[
+
+
+I2C_PLATFORM_DATA gtI2C_platform_dataA[] = {
+	{I2C1_BASE_ADDR,50000,0xfe,0},
+	{I2C2_BASE_ADDR,200000,0xfe,0},
+	{I2C3_BASE_ADDR,100000,0xfe,0},
+};
+
+unsigned int gdwBusNum=2; //default BUS is I2C3 .
+#endif //CONFIG_I2C_MULTI_BUS
+
 DECLARE_GLOBAL_DATA_PTR;
 
 static u32 system_rev;
 static enum boot_device boot_dev;
+
+
+
+static GPIO_OUT gt_ntx_gpio_spd_en= {
+	MX50_PIN_ECSPI1_MOSI,  // pin name .
+	IOMUX_CONFIG_ALT1, // pin config .
+	0, // pad config .
+	4, // gpio group .
+	13, // gpio number .
+	1, // output value .
+	0, // not inited .
+	"SPD_EN",
+};
+
+static GPIO_KEY_BTN gt_ntx_gpio_home_key= {
+	MX50_PIN_KEY_ROW0,  // pin name .
+	IOMUX_CONFIG_ALT1, // pin config .
+	//PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE|PAD_CTL_DRV_HIGH, // pad config .
+	0, // pad config .
+	4, // gpio group .
+	1, // gpio number .
+	0, // key down value .
+	0, // not inited .
+	"[HOME]",
+};
+
+static GPIO_KEY_BTN gt_ntx_gpio_fl_key= {
+	MX50_PIN_EPDC_BDR0,  // pin name .
+	IOMUX_CONFIG_ALT1, // pin config .
+	PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE|PAD_CTL_DRV_HIGH, // pad config .
+	4, // gpio group .
+	23, // gpio number .
+	0, // key down value .
+	0, // not inited .
+	"[FL]",
+};
+
+static GPIO_KEY_BTN gt_ntx_gpio_hallsensor_key= {
+	MX50_PIN_SD3_D5,  // pin name .
+	IOMUX_CONFIG_ALT1, // pin config .
+	0, // pad config .
+	5, // gpio group .
+	25, // gpio number .
+	0, // not inited .
+	0, // key down value .
+	"[HALL]",
+};
+
+static GPIO_KEY_BTN gt_ntx_gpio_5_15_hallsensor_key= {
+	MX50_PIN_SD2_D7,  // pin name .
+	IOMUX_CONFIG_ALT1, // pin config .
+	0, // pad config .
+	5, // gpio group .
+	15, // gpio number .
+	0, // not inited .
+	0, // key down value .
+	"[HALL]",
+};
+
+GPIO_KEY_BTN * ntx_gpio_keysA[] = {
+	&gt_ntx_gpio_home_key,
+	&gt_ntx_gpio_fl_key,
+//	&gt_ntx_gpio_hallsensor_key,
+};
+
+int gi_ntx_gpio_keys=sizeof(ntx_gpio_keysA)/sizeof(ntx_gpio_keysA[0]);
+
+
 
 static inline void setup_boot_device(void)
 {
@@ -129,9 +226,40 @@ static inline void setup_soc_rev(void)
 	}
 }
 
-static inline void setup_board_rev(int rev)
+static inline void set_board_rev(int rev)
 {
 	system_rev |= (rev & 0xF) << 8;
+}
+
+static inline void setup_board_rev(void)
+{
+#if defined(CONFIG_MX50_RD3)
+	unsigned int reg;
+
+	set_board_rev(0x3);
+
+	/* IO init for RD3 */
+	// disable HDMI_PWR
+	reg = readl(GPIO1_BASE_ADDR + GPIO_DR);
+	reg &= (~(1<<25));
+	writel(reg, GPIO1_BASE_ADDR + GPIO_DR);
+	reg = readl(GPIO1_BASE_ADDR + GPIO_GDIR);
+	reg |= (1<<25);
+	writel(reg, GPIO1_BASE_ADDR + GPIO_GDIR);
+	mxc_request_iomux(MX50_PIN_EIM_RW, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_EIM_RW, 0x84);
+#endif
+}
+
+static inline void setup_arch_id(void)
+{
+#if defined(CONFIG_MX50_RDP) || defined(CONFIG_MX50_RD3)
+	gd->bd->bi_arch_number = MACH_TYPE_MX50_RDP;
+#elif defined(CONFIG_MX50_ARM2)
+	gd->bd->bi_arch_number = MACH_TYPE_MX50_ARM2;
+#else
+#	error "Unsupported board!"
+#endif
 }
 
 inline int is_soc_rev(int rev)
@@ -214,7 +342,31 @@ int dram_init(void)
 
 static void setup_uart(void)
 {
+	unsigned int reg;
 
+#if defined(CONFIG_MX50_RD3)
+	/* UART3 TXD */
+	mxc_request_iomux(MX50_PIN_UART3_TXD, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_UART3_TXD, 0x1E4);
+	/* Enable UART1 */
+	reg = readl(GPIO6_BASE_ADDR + 0x0);
+	reg |= (1 << 14);
+	writel(reg, GPIO6_BASE_ADDR + 0x0);
+
+	reg = readl(GPIO6_BASE_ADDR + 0x4);
+	reg |= (1 << 14);
+	writel(reg, GPIO6_BASE_ADDR + 0x4);
+#endif
+#ifdef CONFIG_MX50_E606XX
+	/* UART2 RXD */
+	mxc_request_iomux(MX50_PIN_UART2_RXD, IOMUX_CONFIG_ALT0);
+	mxc_iomux_set_pad(MX50_PIN_UART2_RXD, 0x1E4);
+	mxc_iomux_set_input(MUX_IN_UART2_IPP_UART_RXD_MUX_SELECT_INPUT, 0x3);
+
+	/* UART2 TXD */
+	mxc_request_iomux(MX50_PIN_UART2_TXD, IOMUX_CONFIG_ALT0);
+	mxc_iomux_set_pad(MX50_PIN_UART2_TXD, 0x1E4);
+#else
 	/* UART1 RXD */
 	mxc_request_iomux(MX50_PIN_UART1_RXD, IOMUX_CONFIG_ALT0);
 	mxc_iomux_set_pad(MX50_PIN_UART1_RXD, 0x1E4);
@@ -223,37 +375,143 @@ static void setup_uart(void)
 	/* UART1 TXD */
 	mxc_request_iomux(MX50_PIN_UART1_TXD, IOMUX_CONFIG_ALT0);
 	mxc_iomux_set_pad(MX50_PIN_UART1_TXD, 0x1E4);
+#endif
 }
+
+
+static void _init_tps65185_power(int iIsWakeup,int iIsActivePwr)
+{
+	char cCmdA[256];
+	int iCur_I2C_Chn;
+
+	//ASSERT(O_pbRegVal);
+	//
+
+	if(!gptNtxHwCfg) {
+		printf("%s(): cannot init without hwconfig !\n",__FUNCTION__);
+		return ;
+	}
+
+	if(6==gptNtxHwCfg->m_val.bDisplayCtrl) {
+		printf("init TPS65185 power ...\n");
+		iCur_I2C_Chn=(int)(gdwBusNum+1);
+
+		// Display controller is MX50+TPS65185 .
+		
+		// EPD PMIC power ...
+		
+		// power on the PMIC ...
+		mxc_request_iomux(MX50_PIN_EIM_CRE,
+				IOMUX_CONFIG_ALT1);
+		//mxc_iomux_set_pad(MX50_PIN_EIM_CRE, 0);
+		{
+			unsigned int reg;
+			// set output .
+			reg = readl(GPIO1_BASE_ADDR + 0x4);
+			reg |= (0x1 << 27);
+			writel(reg, GPIO1_BASE_ADDR + 0x4);
+			
+			// output high .
+			reg = readl(GPIO1_BASE_ADDR + 0x0);
+			reg &= ~(0x1 << 27);
+			writel(reg, GPIO1_BASE_ADDR + 0x0);
+			udelay(50*1000);
+
+			// output high .
+			reg = readl(GPIO1_BASE_ADDR + 0x0);
+			reg |= (0x1 << 27);
+			writel(reg, GPIO1_BASE_ADDR + 0x0);
+			udelay(50*1000);
+		}
+
+		{
+			// set PMIC into STANBY mode ...
+			// EPD_PWRCTRL0 (WAKEUP)
+			mxc_request_iomux(MX50_PIN_EPDC_PWRCTRL0,
+				IOMUX_CONFIG_ALT1);
+			//mxc_iomux_set_pad(MX50_PIN_EPDC_PWRCTRL0, 0);
+			{
+				unsigned int reg;
+				// set output .
+				reg = readl(GPIO3_BASE_ADDR + 0x4);
+				reg |= (0x1 << 29);
+				writel(reg, GPIO3_BASE_ADDR + 0x4);				
+				
+				reg = readl(GPIO3_BASE_ADDR + 0x0);
+				if(iIsWakeup) {
+					reg |= (0x1 << 29);
+				}
+				else {
+					reg &= ~(0x1 << 29);
+				}
+				writel(reg, GPIO3_BASE_ADDR + 0x0);
+			}
+			udelay(50*1000);
+		}
+
+		{
+			// EPD_PWRCTRL1 (PWRUP)
+			mxc_request_iomux(MX50_PIN_EPDC_PWRCTRL1,
+					IOMUX_CONFIG_ALT1);
+			//mxc_iomux_set_pad(MX50_PIN_EPDC_PWRCTRL1, 0);
+			{
+				unsigned int reg;
+				// set output .
+				reg = readl(GPIO3_BASE_ADDR + 0x4);
+				reg |= (0x1 << 30);
+				writel(reg, GPIO3_BASE_ADDR + 0x4);	
+				
+				reg = readl(GPIO3_BASE_ADDR + 0x0);
+				if(iIsActivePwr) {
+					reg |= (0x1 << 30);
+				}
+				else {
+					reg &= ~(0x1 << 30);
+				}
+				writel(reg, GPIO3_BASE_ADDR + 0x0);		
+			}
+			udelay(5*1000);
+		}
+
+	}
+
+}
+
 
 #ifdef CONFIG_I2C_MXC
 static void setup_i2c(unsigned int module_base)
 {
+	int iI2C_Chn=-1;
+
 	switch (module_base) {
 	case I2C1_BASE_ADDR:
+		iI2C_Chn=1;
 		/* i2c1 SDA */
 		mxc_request_iomux(MX50_PIN_I2C1_SDA,
 				IOMUX_CONFIG_ALT0 | IOMUX_CONFIG_SION);
 		mxc_iomux_set_pad(MX50_PIN_I2C1_SDA, PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
 		/* i2c1 SCL */
 		mxc_request_iomux(MX50_PIN_I2C1_SCL,
 				IOMUX_CONFIG_ALT0 | IOMUX_CONFIG_SION);
 		mxc_iomux_set_pad(MX50_PIN_I2C1_SCL, PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
 		break;
+
 	case I2C2_BASE_ADDR:
+		iI2C_Chn=2;
 		/* i2c2 SDA */
 		mxc_request_iomux(MX50_PIN_I2C2_SDA,
 				IOMUX_CONFIG_ALT0 | IOMUX_CONFIG_SION);
 		mxc_iomux_set_pad(MX50_PIN_I2C2_SDA,
 				PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
 
 		/* i2c2 SCL */
 		mxc_request_iomux(MX50_PIN_I2C2_SCL,
@@ -261,18 +519,21 @@ static void setup_i2c(unsigned int module_base)
 		mxc_iomux_set_pad(MX50_PIN_I2C2_SCL,
 				PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	
 		break;
+
 	case I2C3_BASE_ADDR:
+		iI2C_Chn=3;
 		/* i2c3 SDA */
 		mxc_request_iomux(MX50_PIN_I2C3_SDA,
 				IOMUX_CONFIG_ALT0 | IOMUX_CONFIG_SION);
 		mxc_iomux_set_pad(MX50_PIN_I2C3_SDA,
 				PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
 
 		/* i2c3 SCL */
 		mxc_request_iomux(MX50_PIN_I2C3_SCL,
@@ -280,13 +541,21 @@ static void setup_i2c(unsigned int module_base)
 		mxc_iomux_set_pad(MX50_PIN_I2C3_SCL,
 				PAD_CTL_SRE_FAST |
 				PAD_CTL_ODE_OPENDRAIN_ENABLE |
-				PAD_CTL_DRV_HIGH | PAD_CTL_100K_PU |
-				PAD_CTL_HYS_ENABLE);
+				PAD_CTL_DRV_HIGH | PAD_CTL_22K_PU |
+				PAD_CTL_HYS_ENABLE|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
 		break;
 	default:
 		printf("Invalid I2C base: 0x%x\n", module_base);
 		break;
 	}
+
+	//
+	// devices power initialize ...
+	//
+	if(IS_I2C_CHN_TPS65185(iI2C_Chn)) {
+		_init_tps65185_power(1,0);
+	}
+
 }
 
 #endif
@@ -599,6 +868,18 @@ static void setup_fec(void)
 	reg = readl(GPIO6_BASE_ADDR + 0x4);
 	reg |= (1 << 23);
 	writel(reg, GPIO6_BASE_ADDR + 0x4);
+
+#elif defined(CONFIG_MX50_RD3)
+	/* FEC_EN: gpio4-15 set to 0 to enable FEC */
+	mxc_request_iomux(MX50_PIN_I2C3_SDA, IOMUX_CONFIG_ALT1);
+
+	reg = readl(GPIO4_BASE_ADDR + 0x0);
+	reg |= (1 << 15);
+	writel(reg, GPIO4_BASE_ADDR + 0x0);
+
+	reg = readl(GPIO4_BASE_ADDR + 0x4);
+	reg |= (1 << 15);
+	writel(reg, GPIO4_BASE_ADDR + 0x4);
 #endif
 
 	/*FEC_MDIO*/
@@ -647,7 +928,7 @@ static void setup_fec(void)
 	mxc_iomux_set_pad(MX50_PIN_DISP_D2, 0x0);
 	mxc_iomux_set_input(MUX_IN_FEC_FEC_RX_DV_SELECT_INPUT, 0);
 
-#if defined(CONFIG_MX50_RDP)
+#if defined(CONFIG_MX50_RDP) || defined(CONFIG_MX50_RD3)
 	/* FEC_RESET_B: gpio4-12 */
 	mxc_request_iomux(MX50_PIN_ECSPI1_SCLK, IOMUX_CONFIG_ALT1);
 
@@ -688,7 +969,6 @@ static void setup_fec(void)
 #endif
 
 #ifdef CONFIG_CMD_MMC
-
 struct fsl_esdhc_cfg esdhc_cfg[3] = {
 	{MMC_SDHC1_BASE_ADDR, 1, 1},
 	{MMC_SDHC2_BASE_ADDR, 1, 1},
@@ -756,7 +1036,7 @@ int esdhc_gpio_init(bd_t *bis)
 			mxc_request_iomux(MX50_PIN_SD2_D6,  IOMUX_CONFIG_ALT0);
 			mxc_request_iomux(MX50_PIN_SD2_D7,  IOMUX_CONFIG_ALT0);
 
-			mxc_iomux_set_pad(MX50_PIN_SD2_CMD, 0x14);
+			mxc_iomux_set_pad(MX50_PIN_SD2_CMD, 0x1E4);
 			mxc_iomux_set_pad(MX50_PIN_SD2_CLK, 0xD4);
 			mxc_iomux_set_pad(MX50_PIN_SD2_D0,  0x1D4);
 			mxc_iomux_set_pad(MX50_PIN_SD2_D1,  0x1D4);
@@ -1054,6 +1334,37 @@ static void setup_epdc()
 #endif
 
 
+static int IsMaxCpuFreq1GHz(void)
+{
+#if 1 //[
+	if(gptNtxHwCfg) {
+		if(2==gptNtxHwCfg->m_val.bCPUFreq) {
+			return 1;
+		}
+		else {
+			return 0;
+		}
+	}
+	else {
+		printf("[WARNING] %s no hwconfig !\n",__FUNCTION__);
+		return 0;
+	}
+
+#else //][
+	char *bootargs;
+
+	bootargs = getenv("bootargs_base");
+
+	if( bootargs != NULL &&
+		strstr(bootargs, "mx50_1GHz") != NULL)
+	{
+		return 1;
+	}
+	return 0;
+#endif //]
+}
+
+
 #ifdef CONFIG_IMX_CSPI
 static void setup_power(void)
 {
@@ -1064,6 +1375,59 @@ static void setup_power(void)
 
 	/* Enable VGEN1 to enable ethernet */
 	slave = spi_pmic_probe();
+
+#if defined(CONFIG_MX50_RD3)
+	// MC34708 (Ripley)
+	// set SW1 operating mode to PWM/PFS
+	val = pmic_reg(slave, 28, 0, 0);
+	val &= ~0x00000F;
+	val |= 0x00000D;
+	pmic_reg(slave, 28, val, 1);
+
+	if(IsMaxCpuFreq1GHz()) {
+		// setup SW1A/B power @1.275V
+		pmic_reg(slave, 24, 0x432, 1);
+		// setup SW2/3 power, SW2=1.225V, SW3=1.30V
+		pmic_reg(slave, 25, 0x31A62E, 1);
+	}
+	else {
+		// setup SW2/3 power, SW2=1.225V, SW3=1.20V
+		pmic_reg(slave, 25, 0x31662E, 1);
+	}
+	udelay(10000);
+	
+	// set VGEN1 to 1.25V
+	val = pmic_reg(slave, 30, 0, 0);
+	val &= 0xFFFFF7;
+	val |= 0x01;
+	pmic_reg(slave, 30, val, 1);
+
+	// reset PMIC IRQ mask
+	pmic_reg(slave, 1, 0xffffff, 1);
+	pmic_reg(slave, 4, 0xffffff, 1);
+
+	/* Set global reset time to 0s*/
+	val = pmic_reg(slave, 15, 0, 0);
+	val &= ~(0x300);
+	pmic_reg(slave, 15, val, 1);
+#else
+	// MC13892
+	// set SW1 operating mode to PWM/AUTO
+	val = pmic_reg(slave, 28, 0, 0);
+	val &= ~0x00000F;
+	val |= 0x000006;
+	pmic_reg(slave, 28, val, 1);
+	
+	if(IsMaxCpuFreq1GHz()) {
+		// setup SW1 power @1.275V
+		val = pmic_reg(slave, MC13892_REG_24, 0, 0);
+		val &= ~0x1F;
+		val |= 0x1B;
+		pmic_reg(slave, MC13892_REG_24, val, 1);
+		// setup SW3 power SW3=1.30V
+		val = pmic_reg(slave, MC13892_REG_26, 0x00381C, 1);
+	}
+	udelay(10000);
 
 	val = pmic_reg(slave, 30, 0, 0);
 	val |= 0x3;
@@ -1077,6 +1441,7 @@ static void setup_power(void)
 	val = pmic_reg(slave, 33, 0, 0);
 	val |= 0x40;
 	pmic_reg(slave, 33, val, 1);
+#endif
 
 	spi_pmic_free(slave);
 }
@@ -1094,8 +1459,114 @@ void setup_voltage_cpu(void)
 }
 #endif
 
+#define ON_LED(_IsTurnON)	\
+	switch(gptNtxHwCfg->m_val.bPCB) {\
+	case 34:/* E606FXA */\
+	case 35:/* E606FXB */\
+	case 28:/* E606CX */\
+		E60612_led_B(_IsTurnON);\
+		break;\
+	default:\
+		E60612_led_G(_IsTurnON);\
+		break;\
+	}
+
+void E60612_led_R(int iIsTrunOn)
+{
+	unsigned int reg;
+	reg = readl(GPIO6_BASE_ADDR + 0x0);
+	if(iIsTrunOn) {
+		reg &= ~(0x1 << 25);
+	}
+	else {
+		reg |= (0x1 << 25);
+	}
+	writel(reg, GPIO6_BASE_ADDR + 0x0);
+	
+	
+	reg = readl(GPIO1_BASE_ADDR + 0x0);
+	if(iIsTrunOn) {
+		reg &= ~(0x1 << 25);
+	}
+	else {
+		reg |= (0x1 << 25);
+	}
+	writel(reg, GPIO1_BASE_ADDR + 0x0);
+}
+void E60612_led_G(int iIsTrunOn)
+{
+	unsigned int reg;
+	reg = readl(GPIO6_BASE_ADDR + 0x0);
+	if(iIsTrunOn) {
+		reg &= ~(0x1 << 26);
+	}
+	else {
+		reg |= (0x1 << 26);
+	}
+	writel(reg, GPIO6_BASE_ADDR + 0x0);
+	
+	
+	reg = readl(GPIO1_BASE_ADDR + 0x0);
+	if(iIsTrunOn) {
+		reg &= ~(0x1 << 24);
+	}
+	else {
+		reg |= (0x1 << 24);
+	}
+	writel(reg, GPIO1_BASE_ADDR + 0x0);
+	
+}
+void E60612_led_B(int iIsTrunOn)
+{
+	unsigned int reg;
+	reg = readl(GPIO6_BASE_ADDR + 0x0);
+	if(iIsTrunOn) {
+		reg &= ~(0x1 << 24);
+	}
+	else {
+		reg |= (0x1 << 24);
+	}
+	writel(reg, GPIO6_BASE_ADDR + 0x0);
+}
+
 int board_init(void)
 {
+	unsigned int reg;
+	
+	// initial MSP_INT
+	mxc_request_iomux(MX50_PIN_CSPI_SS0, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_CSPI_SS0, PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+
+	mxc_request_iomux(MX50_PIN_OWIRE, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_PWM1, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_PWM2, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_EIM_OE, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_EIM_RW, IOMUX_CONFIG_ALT1);
+	/* Set as output */
+	reg = readl(GPIO6_BASE_ADDR + 0x4);
+	reg |= (7 << 24);
+	writel(reg, GPIO6_BASE_ADDR + 0x4);
+	
+	reg = readl(GPIO1_BASE_ADDR + 0x4);
+	reg |= (3 << 24);
+	writel(reg, GPIO1_BASE_ADDR + 0x4);
+
+	/* Set LED status */
+	reg = readl(GPIO6_BASE_ADDR + 0x0);
+	reg |= (3 << 24);
+	writel(reg, GPIO6_BASE_ADDR + 0x0);
+
+#if 0
+	reg = readl(GPIO1_BASE_ADDR + 0x0);
+	reg |= (3 << 24);
+	reg &= (~(1 << 24));
+	writel(reg, GPIO1_BASE_ADDR + 0x0);
+#else
+	ON_LED(1);
+#endif
+	
+	
+
 #ifdef CONFIG_MFG
 /* MFG firmware need reset usb to avoid host crash firstly */
 #define USBCMD 0x140
@@ -1109,14 +1580,11 @@ int board_init(void)
 	/* soc rev */
 	setup_soc_rev();
 
+	/* board rev */
+	setup_board_rev();
+
 	/* arch id for linux */
-#if defined(CONFIG_MX50_RDP)
-	gd->bd->bi_arch_number = MACH_TYPE_MX50_RDP;
-#elif defined(CONFIG_MX50_ARM2)
-	gd->bd->bi_arch_number = MACH_TYPE_MX50_ARM2;
-#else
-#	error "Unsupported board!"
-#endif
+	setup_arch_id();
 
 	/* boot parameters */
 	gd->bd->bi_boot_params = PHYS_SDRAM_1 + 0x100;
@@ -1137,7 +1605,167 @@ int board_init(void)
 	setup_epdc();
 #endif
 
+
+#ifdef CONFIG_I2C_MXC
+	#if 0//def CONFIG_I2C_MULTI_BUS//[
+	{
+		int i;
+		for(i=0;i<sizeof(gtI2C_platform_dataA)/sizeof(gtI2C_platform_dataA[0]);i++)
+		{
+			setup_i2c (gtI2C_platform_dataA[i].dwPort);
+		}
+	}
+	#else //][! CONFIG_I2C_MULTI_BUS
+	setup_i2c (CONFIG_SYS_I2C_PORT);
+	#endif //]  CONFIG_I2C_MULTI_BUS
+#endif
+
+	 
 	return 0;
+}
+
+#ifdef CONFIG_ANDROID_RECOVERY
+struct reco_envs supported_reco_envs[BOOT_DEV_NUM] = {
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+	{
+	 .cmd = CONFIG_ANDROID_RECOVERY_BOOTCMD_MMC,
+	 .args = CONFIG_ANDROID_RECOVERY_BOOTARGS_MMC,
+	 },
+	{
+	 .cmd = CONFIG_ANDROID_RECOVERY_BOOTCMD_MMC,
+	 .args = CONFIG_ANDROID_RECOVERY_BOOTARGS_MMC,
+	 },
+	{
+	 .cmd = NULL,
+	 .args = NULL,
+	 },
+};
+
+int check_recovery_cmd_file(void)
+{
+	disk_partition_t info;
+	ulong part_length;
+	int filelen;
+
+	switch (get_boot_device()) {
+	case MMC_BOOT:
+	case SD_BOOT:
+		{
+			block_dev_desc_t *dev_desc = NULL;
+			struct mmc *mmc = find_mmc_device(0);
+
+			dev_desc = get_dev("mmc", 0);
+
+			if (NULL == dev_desc) {
+				puts("** Block device MMC 0 not supported\n");
+				return 0;
+			}
+
+			mmc_init(mmc);
+
+			if (get_partition_info(dev_desc,
+					CONFIG_ANDROID_CACHE_PARTITION_MMC,
+					&info)) {
+				printf("** Bad partition %d **\n",
+					CONFIG_ANDROID_CACHE_PARTITION_MMC);
+				return 0;
+			}
+
+			part_length = ext2fs_set_blk_dev(dev_desc,
+							CONFIG_ANDROID_CACHE_PARTITION_MMC);
+			if (part_length == 0) {
+				printf("** Bad partition - mmc 0:%d **\n",
+					CONFIG_ANDROID_CACHE_PARTITION_MMC);
+				ext2fs_close();
+				return 0;
+			}
+
+			if (!ext2fs_mount(part_length)) {
+				printf("** Bad ext2 partition or disk - mmc 0:%d **\n",
+					CONFIG_ANDROID_CACHE_PARTITION_MMC);
+				ext2fs_close();
+				return 0;
+			}
+
+			filelen = ext2fs_open(CONFIG_ANDROID_RECOVERY_CMD_FILE);
+
+			ext2fs_close();
+		}
+		break;
+	case NAND_BOOT:
+		return 0;
+		break;
+	case SPI_NOR_BOOT:
+		return 0;
+		break;
+	case UNKNOWN_BOOT:
+	default:
+		return 0;
+		break;
+	}
+
+	return (filelen > 0) ? 1 : 0;
+
+}
+#endif
+
+extern void mx50_overclock(u32 databahn_base, u32 ccm_base, u32 pll1_base, u32 ddr_div_pll);
+extern void mxc_dump_clocks(void);
+
+#define ENSETx  0x100
+#define IRAM_BASE_FREE_ADDR	(IRAM_BASE_ADDR + 0x6000)
+void start_overclock(void)
+{
+	void (*pfn_overclock)(u32 databahn_base, u32 ccm_base, u32 pll1_base, u32 ddr_div_pll);
+	unsigned int enset[4];
+	int i;
+
+	printf("Relock PLL1 to 1GHz ...\n");
+
+	pfn_overclock = (void *)IRAM_BASE_FREE_ADDR;
+	memcpy(pfn_overclock, mx50_overclock, SZ_4K);
+
+	// disable all interrupts in TZIC
+	for (i = 0; i < 4; i++) {
+		enset[i] = readl(TZIC_BASE_ADDR + ENSETx + i*4);
+		writel(0, TZIC_BASE_ADDR + ENSETx + i*4);
+	}
+
+#if defined(CONFIG_LPDDR2) || defined(CONFIG_DDR2)
+	pfn_overclock(DATABAHN_BASE_ADDR, CCM_BASE_ADDR, PLL1_BASE_ADDR, 4);
+#else // CONFIG_MDDR
+	pfn_overclock(DATABAHN_BASE_ADDR, CCM_BASE_ADDR, PLL1_BASE_ADDR, 5);
+#endif
+
+	// restore interrupts in TZIC
+	for (i = 0; i < 4; i++) {
+		writel(enset[i], TZIC_BASE_ADDR + ENSETx + i*4);
+	}
+
+	mxc_dump_clocks();
 }
 
 int board_late_init(void)
@@ -1145,6 +1773,13 @@ int board_late_init(void)
 #ifdef CONFIG_IMX_CSPI
 	setup_power();
 #endif
+	run_command("load_ntxbins", 0);//
+
+	_init_tps65185_power(0,0);
+
+	if(IsMaxCpuFreq1GHz())
+		start_overclock();
+	
 	return 0;
 }
 
@@ -1152,6 +1787,8 @@ int checkboard(void)
 {
 #if defined(CONFIG_MX50_RDP)
 	printf("Board: MX50 RDP board\n");
+#elif defined(CONFIG_MX50_RD3)
+	printf("Board: MX50 RD3 board\n");
 #elif defined(CONFIG_MX50_ARM2)
 	printf("Board: MX50 ARM2 board\n");
 #else
@@ -1213,3 +1850,503 @@ int checkboard(void)
 
 	return 0;
 }
+
+int init_pwr_i2c_function(int iSetAsFunc)
+{
+	return 0;
+}
+
+int esd_wp_read(void)
+{
+	return 1;
+}
+
+int _sd_cd_status (void)
+{
+	unsigned int reg;
+	mxc_request_iomux(MX50_PIN_SD2_CD, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_SD2_CD, PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	/* Set as input */
+	reg = readl(GPIO5_BASE_ADDR + 0x4);
+	reg &= ~(1 << 17);
+	writel(reg, GPIO5_BASE_ADDR + 0x4);
+	
+	return (readl(GPIO5_BASE_ADDR + 0x0)&(1<<17))?0:1;
+}
+
+int gpio_out_init(GPIO_OUT *I_pt_gpio_out)
+{
+	int iRet = 0 ;
+	unsigned int reg;
+	u32 dwGPIO_dir_addr=0;
+	u32 dwGPIO_data_addr=0;
+	
+	if(!I_pt_gpio_out) {
+		printf("%s(%d) : error parameter ! null ptr !\n",__FUNCTION__,__LINE__);
+		return -1;
+	}
+	
+	
+	mxc_request_iomux(I_pt_gpio_out->PIN, I_pt_gpio_out->PIN_CFG);
+	mxc_iomux_set_pad(I_pt_gpio_out->PIN, I_pt_gpio_out->PIN_PAD_CFG);
+	
+	switch(I_pt_gpio_out->GPIO_Grp) {
+	case 1:
+		dwGPIO_dir_addr = GPIO1_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO1_BASE_ADDR + 0x0;
+		break;
+	case 2:
+		dwGPIO_dir_addr = GPIO2_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO2_BASE_ADDR + 0x0;
+		break;
+	case 3:
+		dwGPIO_dir_addr = GPIO3_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO3_BASE_ADDR + 0x0;
+		break;
+	case 4:
+		dwGPIO_dir_addr = GPIO4_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO4_BASE_ADDR + 0x0;
+		break;
+	case 5:
+		dwGPIO_dir_addr = GPIO5_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO5_BASE_ADDR + 0x0;
+		break;
+	case 6:
+		dwGPIO_dir_addr = GPIO6_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO6_BASE_ADDR + 0x0;
+		break;
+	case 7:
+		dwGPIO_dir_addr = GPIO7_BASE_ADDR + 0x4;
+		dwGPIO_data_addr = GPIO7_BASE_ADDR + 0x0;
+		break;
+	default :
+		printf("%s():%s [ERROR] GPIO group number error (%hd)!!\n",
+			__FUNCTION__,I_pt_gpio_out->pszName,
+			I_pt_gpio_out->GPIO_Grp);
+		return -2;
+	}
+	
+	/* Set as output */
+	reg = readl(dwGPIO_dir_addr);
+	reg |= (u32)(1 << I_pt_gpio_out->GPIO_Num);
+	writel(reg, dwGPIO_dir_addr);
+
+	// set output value .
+	reg = readl(dwGPIO_data_addr);
+	if(1==I_pt_gpio_out->iOutputValue) {
+		reg |= (u32)(1 << I_pt_gpio_out->GPIO_Num);
+	}
+	else if(0==I_pt_gpio_out->iOutputValue){
+		reg &= ~((u32)(1 << I_pt_gpio_out->GPIO_Num));
+	}
+	writel(reg, dwGPIO_data_addr);
+	
+	++I_pt_gpio_out->iIsInited;
+	
+	return iRet;
+}
+
+int gpio_output(GPIO_OUT *I_pt_gpio_out,int iOutVal) 
+{
+	unsigned int reg;
+	int iRet;
+	int iChk;
+	u32 dwGPIO_data_addr=0;
+	
+	if(!I_pt_gpio_out) {
+		printf("%s(%d) : error parameter ! null ptr !\n",__FUNCTION__,__LINE__);
+		return -1;
+	}
+	
+	if(0==I_pt_gpio_out->iIsInited) {
+		iChk = gpio_out_init(I_pt_gpio_out);
+		if(iChk<0) {
+			return iChk;
+		}
+		udelay(100);
+	}
+	
+	switch(I_pt_gpio_out->GPIO_Grp) {
+	case 1:
+		dwGPIO_data_addr = GPIO1_BASE_ADDR + 0x0;
+		break;
+	case 2:
+		dwGPIO_data_addr = GPIO2_BASE_ADDR + 0x0;
+		break;
+	case 3:
+		dwGPIO_data_addr = GPIO3_BASE_ADDR + 0x0;
+		break;
+	case 4:
+		dwGPIO_data_addr = GPIO4_BASE_ADDR + 0x0;
+		break;
+	case 5:
+		dwGPIO_data_addr = GPIO5_BASE_ADDR + 0x0;
+		break;
+	case 6:
+		dwGPIO_data_addr = GPIO6_BASE_ADDR + 0x0;
+		break;
+	case 7:
+		dwGPIO_data_addr = GPIO7_BASE_ADDR + 0x0;
+		break;
+	default :
+		printf("%s():%s [ERROR] GPIO group number error (%hd)!!\n",
+			__FUNCTION__,I_pt_gpio_out->pszName,
+			I_pt_gpio_out->GPIO_Grp);
+		return -2;
+	}
+	
+	reg = readl(dwGPIO_data_addr);
+	if(1==iOutVal) {
+		reg |= (u32)(1 << I_pt_gpio_out->GPIO_Num);
+	}
+	else if(0==iOutVal){
+		reg &= ~((u32)(1 << I_pt_gpio_out->GPIO_Num));
+	}
+	writel(reg, dwGPIO_data_addr);
+	
+	
+	return iRet;
+}
+
+
+
+int gpio_key_btn_init(GPIO_KEY_BTN *I_pt_gpio_key_btn)
+{
+	int iRet = 0 ;
+	unsigned int reg;
+	u32 dwGPIO_dir_addr=0;
+	
+	if(!I_pt_gpio_key_btn) {
+		printf("%s(%d) : error parameter ! null ptr !\n",__FUNCTION__,__LINE__);
+		return -1;
+	}
+	
+	
+	mxc_request_iomux(I_pt_gpio_key_btn->PIN, I_pt_gpio_key_btn->PIN_CFG);
+	mxc_iomux_set_pad(I_pt_gpio_key_btn->PIN, I_pt_gpio_key_btn->PIN_PAD_CFG);
+	
+	switch(I_pt_gpio_key_btn->GPIO_Grp) {
+	case 1:
+		dwGPIO_dir_addr = GPIO1_BASE_ADDR + 0x4;
+		break;
+	case 2:
+		dwGPIO_dir_addr = GPIO2_BASE_ADDR + 0x4;
+		break;
+	case 3:
+		dwGPIO_dir_addr = GPIO3_BASE_ADDR + 0x4;
+		break;
+	case 4:
+		dwGPIO_dir_addr = GPIO4_BASE_ADDR + 0x4;
+		break;
+	case 5:
+		dwGPIO_dir_addr = GPIO5_BASE_ADDR + 0x4;
+		break;
+	case 6:
+		dwGPIO_dir_addr = GPIO6_BASE_ADDR + 0x4;
+		break;
+	case 7:
+		dwGPIO_dir_addr = GPIO7_BASE_ADDR + 0x4;
+		break;
+	default :
+		printf("%s():%s [ERROR] GPIO group number error (%hd)!!\n",
+			__FUNCTION__,I_pt_gpio_key_btn->pszReportName,
+			I_pt_gpio_key_btn->GPIO_Grp);
+		return -2;
+	}
+	
+	/* Set as input */
+	reg = readl(dwGPIO_dir_addr);
+	reg &= ~(1 << I_pt_gpio_key_btn->GPIO_Num);
+	writel(reg, dwGPIO_dir_addr);
+	
+	++I_pt_gpio_key_btn->iIsInited;
+	
+	return iRet;
+}
+
+
+int gpio_key_btn_is_down(GPIO_KEY_BTN *I_pt_gpio_key_btn) 
+{
+	int iRet;
+	int iChk;
+	u32 dwGPIO_data_addr=0;
+	
+	if(!I_pt_gpio_key_btn) {
+		printf("%s(%d) : error parameter ! null ptr !\n",__FUNCTION__,__LINE__);
+		return -1;
+	}
+	
+	if(0==I_pt_gpio_key_btn->iIsInited) {
+		iChk = gpio_key_btn_init(I_pt_gpio_key_btn);
+		if(iChk<0) {
+			return iChk;
+		}
+		udelay(100);
+	}
+	
+	switch(I_pt_gpio_key_btn->GPIO_Grp) {
+	case 1:
+		dwGPIO_data_addr = GPIO1_BASE_ADDR + 0x0;
+		break;
+	case 2:
+		dwGPIO_data_addr = GPIO2_BASE_ADDR + 0x0;
+		break;
+	case 3:
+		dwGPIO_data_addr = GPIO3_BASE_ADDR + 0x0;
+		break;
+	case 4:
+		dwGPIO_data_addr = GPIO4_BASE_ADDR + 0x0;
+		break;
+	case 5:
+		dwGPIO_data_addr = GPIO5_BASE_ADDR + 0x0;
+		break;
+	case 6:
+		dwGPIO_data_addr = GPIO6_BASE_ADDR + 0x0;
+		break;
+	case 7:
+		dwGPIO_data_addr = GPIO7_BASE_ADDR + 0x0;
+		break;
+	default :
+		printf("%s():%s [ERROR] GPIO group number error (%hd)!!\n",
+			__FUNCTION__,I_pt_gpio_key_btn->pszReportName,
+			I_pt_gpio_key_btn->GPIO_Grp);
+		return -2;
+	}
+	
+	iChk = (readl(dwGPIO_data_addr)&(1<<I_pt_gpio_key_btn->GPIO_Num))?1:0;
+	if(iChk==I_pt_gpio_key_btn->DownValue) {
+		iRet = 1;
+	}
+	else {
+		iRet = 0;
+	}
+	
+	return iRet;
+}
+
+
+int _hallsensor_status (void)
+{
+	int iChk;
+	if(gptNtxHwCfg&&0!=gptNtxHwCfg->m_val.bHallSensor) {
+		if(gptNtxHwCfg->m_val.bPCB==35)
+			iChk = gpio_key_btn_init(&gt_ntx_gpio_5_15_hallsensor_key);
+		else
+			iChk = gpio_key_btn_init(&gt_ntx_gpio_hallsensor_key);
+		
+		if(iChk<0) {
+			return iChk;
+		}
+		
+		if(gptNtxHwCfg->m_val.bPCB==35)
+			return gpio_key_btn_is_down(&gt_ntx_gpio_5_15_hallsensor_key);
+		else
+			return gpio_key_btn_is_down(&gt_ntx_gpio_hallsensor_key);
+	}
+	else {
+		return -1;
+	}
+}
+
+int ntx_gpio_key_is_home_down(void)
+{
+	int iChk;
+	
+	//iChk = gpio_key_btn_init(&gt_ntx_gpio_hallsensor_key);
+	//if(iChk<0) {
+	//	return iChk;
+	//}
+		
+	return gpio_key_btn_is_down(&gt_ntx_gpio_home_key);
+}
+
+
+
+int _get_pcba_id (void)
+{
+	static int g_pcba_id;
+	unsigned int reg;
+
+	//return 0x4;	
+	if (g_pcba_id)
+		return g_pcba_id;
+	
+	mxc_request_iomux(MX50_PIN_UART3_TXD, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_UART3_RXD, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_UART4_RXD, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_SD2_WP, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_UART3_TXD, 0);
+	mxc_iomux_set_pad(MX50_PIN_UART3_RXD, 0);
+	mxc_iomux_set_pad(MX50_PIN_UART4_RXD, 0);
+	mxc_iomux_set_pad(MX50_PIN_SD2_WP, 0);
+	/* Set as input */
+	reg = readl(GPIO6_BASE_ADDR + 0x4);
+	reg &= ~(0x0B << 14);
+	writel(reg, GPIO6_BASE_ADDR + 0x4);
+
+	reg = readl(GPIO5_BASE_ADDR + 0x4);
+	reg &= ~(0x01 << 16);
+	writel(reg, GPIO5_BASE_ADDR + 0x4);
+#if 0 //Read hardware id	
+
+	readl(GPIO6_BASE_ADDR + 0x0);// dummy .
+	readl(GPIO5_BASE_ADDR + 0x0);// dummy .
+	udelay(10000);
+
+	if(readl(GPIO6_BASE_ADDR + 0x0)&(1<<14)) {
+		g_pcba_id |= 1;
+	}
+	if(readl(GPIO6_BASE_ADDR + 0x0)&(1<<15)) {
+		g_pcba_id |= 2;
+	}
+	if(readl(GPIO6_BASE_ADDR + 0x0)&(1<<17)) {
+		g_pcba_id |= 4;
+	}
+	if( !(readl(GPIO5_BASE_ADDR + 0x0)& (1<<16)) ) {
+		g_pcba_id |= 8;
+	}
+#else   //Read hwconfig
+	switch(gptNtxHwCfg->m_val.bPCB)
+	{
+		case 12: //E60610
+		case 20: //E60610C
+		case 21: //E60610D
+			g_pcba_id = 1;
+			break;
+		case 15: //E60620
+			g_pcba_id = 4;
+			break;
+		case 16: //E60630
+			g_pcba_id = 6;
+			break;
+		case 18: //E50600
+			g_pcba_id = 2;
+			break;
+		case 19: //E60680
+			g_pcba_id = 3;
+			break;
+		case 22: //E606A0
+			g_pcba_id = 10;
+			break;
+		case 23: //E60670
+			g_pcba_id = 5;
+			break;
+		case 24: //E606B0
+			g_pcba_id = 14;
+			break;
+		case 27: //E50610
+			g_pcba_id = 9;
+			break;
+		case 28: //E606C0
+			g_pcba_id = 11;
+			break;
+		default:
+			g_pcba_id = gptNtxHwCfg->m_val.bPCB;
+//			printf ("[%s-%d] undefined PCBA ID\n",__func__,__LINE__);
+			break;	
+	}
+#endif
+	printf ("PCB ID is %d\n",g_pcba_id);
+
+	return g_pcba_id;
+}
+
+int _get_sd_number (void)
+{
+	static int g_sd_number=-1;
+	unsigned int reg;
+
+	if (g_sd_number >= 0)
+		return g_sd_number;
+
+	mxc_request_iomux(MX50_PIN_EIM_WAIT, IOMUX_CONFIG_ALT1);
+	mxc_request_iomux(MX50_PIN_EIM_EB1, IOMUX_CONFIG_ALT1);
+
+	mxc_iomux_set_pad(MX50_PIN_EIM_WAIT, 0);
+	mxc_iomux_set_pad(MX50_PIN_EIM_EB1, 0);
+	
+	/* Set as input */
+	reg = readl(GPIO1_BASE_ADDR + 0x4);
+	reg &= ~(0x03 << 20);
+	writel(reg, GPIO1_BASE_ADDR + 0x4);
+	
+	readl(GPIO1_BASE_ADDR + 0x0);// dummy .
+	udelay(10000);
+
+	g_sd_number = (readl(GPIO1_BASE_ADDR + 0x0)>>20) & (0x3);
+	printf("[%s] g_sd_number:%d\n",__FUNCTION__,g_sd_number);
+	return g_sd_number;
+}
+
+int _power_key_status (void)
+{
+	unsigned int reg;
+	mxc_request_iomux(MX50_PIN_CSPI_MISO, IOMUX_CONFIG_ALT1);
+	mxc_iomux_set_pad(MX50_PIN_CSPI_MISO, PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	
+	/* Set as input */
+	reg = readl(GPIO4_BASE_ADDR + 0x4);
+	reg &= ~(1 << 10);
+	writel(reg, GPIO4_BASE_ADDR + 0x4);
+	
+	readl(GPIO4_BASE_ADDR + 0x0);// dummy .
+	udelay(10000);
+	if ((0x06 == _get_pcba_id()) || (0x02 == _get_pcba_id()))
+		return (readl(GPIO4_BASE_ADDR + 0x0)&(1<<10))?1:0;
+	else
+		return (readl(GPIO4_BASE_ADDR + 0x0)&(1<<10))?0:1;
+}
+
+#if defined(CONFIG_MXC_KPD)
+int setup_mxc_kpd(void)
+{
+	mxc_request_iomux(MX50_PIN_KEY_COL0, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_ROW0, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_COL1, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_ROW1, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_COL2, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_ROW2, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_COL3, IOMUX_CONFIG_ALT0);
+	mxc_request_iomux(MX50_PIN_KEY_ROW3, IOMUX_CONFIG_ALT0);
+	mxc_iomux_set_pad(MX50_PIN_KEY_ROW0, PAD_CTL_HYS_ENABLE|PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	mxc_iomux_set_pad(MX50_PIN_KEY_ROW1, PAD_CTL_HYS_ENABLE|PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	mxc_iomux_set_pad(MX50_PIN_KEY_ROW2, PAD_CTL_HYS_ENABLE|PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	mxc_iomux_set_pad(MX50_PIN_KEY_ROW3, PAD_CTL_HYS_ENABLE|PAD_CTL_100K_PU|PAD_CTL_PUE_PULL|PAD_CTL_PKE_ENABLE);
+	mxc_iomux_set_pad(MX50_PIN_KEY_COL0, 0);
+	mxc_iomux_set_pad(MX50_PIN_KEY_COL1, 0);
+	mxc_iomux_set_pad(MX50_PIN_KEY_COL2, 0);
+	mxc_iomux_set_pad(MX50_PIN_KEY_COL3, 0);
+
+	return 0;
+}
+#endif
+
+
+#ifdef CONFIG_I2C_MULTI_BUS//[
+
+unsigned int i2c_get_bus_num(void) 
+{
+	return gdwBusNum;
+}
+
+int i2c_set_bus_num(unsigned int dwBusNum)
+{
+	if(dwBusNum<sizeof(gtI2C_platform_dataA)/sizeof(gtI2C_platform_dataA[0])) {
+		
+		gdwBusNum=dwBusNum;
+
+		if(0==gtI2C_platform_dataA[dwBusNum].iIsInited) {
+			setup_i2c (gtI2C_platform_dataA[dwBusNum].dwPort);
+			i2c_init(CONFIG_SYS_I2C_SPEED, CONFIG_SYS_I2C_SLAVE);
+			gtI2C_platform_dataA[dwBusNum].iIsInited = 1;
+		}
+
+		return 0;
+	}
+	else {
+		printf("%s(%d) : parameter error !!\n",__FUNCTION__,(int)dwBusNum);
+		return -1;
+	}
+}
+
+#endif //CONFIG_I2C_MULTI_BUS
